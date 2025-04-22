@@ -16,6 +16,10 @@ if (CMAKE_INSTALL_PREFIX_INITIALIZED_TO_DEFAULT)
    set(CMAKE_INSTALL_PREFIX /usr)
 endif ()
 
+if (NOT VERSION)
+    set(VERSION 1.0.0)
+endif()
+
 set(CMAKE_MODULE_PATH ${CMAKE_MODULE_PATH} ${PROJECT_SOURCE_DIR}/cmake)
 # 引入翻译生成
 include(translation-generate)

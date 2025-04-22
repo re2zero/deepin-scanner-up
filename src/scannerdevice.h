@@ -55,15 +55,9 @@ public:
     // Attempts to cancel an ongoing scan (if supported by backend/device).
     void cancelScan();
 
-    // Sets scan parameters before starting scan
-    void setScanParams(int dpi, const QString &colorMode);
-
     // Helper function (if needed publicly, otherwise move to private/protected)
     // Ensure the signature matches the cpp definition (should return bool)
     bool advance(Image *im); // Example signature, adjust as needed
-    
-    // Get preview image from scanner
-    QImage getPreviewImage();
 
 signals:
     // Emitted when the scan successfully completes.
@@ -76,6 +70,9 @@ signals:
     // Note: Requires modification in scan_it to emit this.
     void scanProgress(int percentage);
 
+    // 新增信号
+    void previewLineAvailable(const QImage &line); // 用于实时预览扫描线
+
 private:
 #ifndef _WIN32
     // The core scanning function (refactored from your original code).
@@ -86,10 +83,9 @@ private:
     bool m_saneInitialized = false; // Flag indicating if sane_init was called
 #endif
     bool m_deviceOpen = false; // Flag indicating if a device is open
+    bool m_usingTestDevice = false;
     
-    // Scan parameters
-    int m_dpi = 300; // Default DPI
-    QString m_colorMode = "Color"; // Default color mode
+    void generateTestImage(const QString &outputPath);
 };
 
 #endif // SCANNERDEVICE_H 

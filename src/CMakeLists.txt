@@ -32,8 +32,8 @@ file(GLOB_RECURSE SOURCES
     "*.cpp"
     "*.c"
     "*.h"
-    "ui/*.cpp"
-    "ui/*.h"
+    # "ui/*.cpp"
+    # "ui/*.h"
 )
 
 # app sources

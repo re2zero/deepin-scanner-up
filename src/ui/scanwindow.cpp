@@ -165,7 +165,7 @@ void ScanWindow::initConnections()
         QString format = convertFileFormat(m_formatCombo->currentText());
 
         // 调用扫描设备
-        m_scannerDevice->setScanParams(dpi, colorMode);
+        // m_scannerDevice->setScanParams(dpi, colorMode);
         m_scannerDevice->startScan("/tmp/scan_temp." + format.toLower());
     });
     

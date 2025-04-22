@@ -1,382 +1,1521 @@
 #include "webcamdevice.h"
-#include <QVideoProbe>
-#include <QBuffer>
-#include <QEventLoop>
-
-QImage WebcamDevice::getPreviewImage()
-{
-    if (!m_camera || m_camera->status() != QCamera::ActiveStatus) {
-        qWarning() << "Cannot get preview - camera not active";
-        return QImage();
-    }
-
-    // 使用QVideoProbe捕获视频帧
-    QVideoProbe probe;
-    if (!probe.setSource(m_camera)) {
-        qWarning() << "Failed to set up video probe for preview";
-        return QImage();
-    }
-
-    QImage preview;
-    QEventLoop loop;
-    QTimer::singleShot(1000, &loop, &QEventLoop::quit); // 超时1秒
-
-    // 连接视频帧信号
-    QObject::connect(&probe, &QVideoProbe::videoFrameProbed, [&](const QVideoFrame &frame) {
-        QVideoFrame cloneFrame(frame);
-        if (cloneFrame.map(QAbstractVideoBuffer::ReadOnly)) {
-            QImage::Format imageFormat = QVideoFrame::imageFormatFromPixelFormat(cloneFrame.pixelFormat());
-            if (imageFormat != QImage::Format_Invalid) {
-                preview = QImage(cloneFrame.bits(),
-                               cloneFrame.width(),
-                               cloneFrame.height(),
-                               cloneFrame.bytesPerLine(),
-                               imageFormat).copy();
-            }
-            cloneFrame.unmap();
-            loop.quit();
-        }
-    });
-
-    loop.exec();
-    return preview;
-}
 #include <QDebug>
-#include <QTimer>
 #include <QDir>
 #include <QFile>
 #include <QDateTime>
+#include <QPainter>
+#include <QPaintEvent>
+#include <QThread>
+#include <fcntl.h>
+#include <unistd.h>
+#include <errno.h>
+#include <sys/ioctl.h>
+#include <sys/mman.h>
+#include <linux/videodev2.h>
+#include <algorithm>
+#include <cstdio>
+#include <exception>
+#include <sys/stat.h>
+#include <sys/sysinfo.h>
+#include <QMutex>
+#include <QMutexLocker>
 
-WebcamDevice::WebcamDevice(QObject *parent)
-    : QObject(parent), m_camera(nullptr), m_imageCapture(nullptr), m_deviceSelected(false), m_captureRetries(0)
+// PreviewWidget 实现
+PreviewWidget::PreviewWidget(QWidget *parent)
+    : QWidget(parent)
 {
-    // 设置捕获重试定时器
-    m_captureTimer.setSingleShot(true);
-    connect(&m_captureTimer, &QTimer::timeout, this, &WebcamDevice::tryCapture);
+    setAttribute(Qt::WA_OpaquePaintEvent);
+    setSizePolicy(QSizePolicy::Expanding, QSizePolicy::Expanding);
+    setMinimumSize(320, 240);
+}
+
+void PreviewWidget::updateFrame(const QImage &frame)
+{
+    m_currentFrame = frame;
+    update();
+}
+
+void PreviewWidget::paintEvent(QPaintEvent *event)
+{
+    QPainter painter(this);
+
+    if (m_currentFrame.isNull()) {
+        painter.fillRect(rect(), Qt::black);
+        return;
+    }
+
+    QRect targetRect = rect();
+    QSize scaled = m_currentFrame.size().scaled(targetRect.size(), Qt::KeepAspectRatio);
+    targetRect.setSize(scaled);
+    targetRect.moveCenter(rect().center());
+
+    painter.drawImage(targetRect, m_currentFrame);
+}
+
+// WebcamDevice 实现
+WebcamDevice::WebcamDevice(QObject *parent)
+    : QObject(parent), m_fd(-1), m_currentBuffer(0), m_isInitialized(false), m_deviceSelected(false), m_previewWidget(new PreviewWidget), m_width(640), m_height(480), m_pixelFormat(V4L2_PIX_FMT_YUYV)
+{
+    memset(m_buffers, 0, sizeof(m_buffers));
+    memset(m_bufferSizes, 0, sizeof(m_bufferSizes));
+
+    m_previewTimer.setInterval(33);   // ~30 fps
+    connect(&m_previewTimer, &QTimer::timeout, this, &WebcamDevice::updatePreview);
 }
 
 WebcamDevice::~WebcamDevice()
 {
     closeDevice();
+    delete m_previewWidget;
 }
 
 QStringList WebcamDevice::getAvailableDevices()
 {
     QStringList devices;
-    const QList<QCameraInfo> cameras = QCameraInfo::availableCameras();
-    for (const QCameraInfo &cameraInfo : cameras) {
-        devices << cameraInfo.description();
-        qDebug() << "Found camera:" << cameraInfo.description()
-                 << "Position:" << (cameraInfo.position() == QCamera::FrontFace ? "Front" : "Back")
-                 << "Orientation:" << cameraInfo.orientation();
-    }
+    QDir dir("/dev");
+    QStringList filters;
+    filters << "video*";
+    QFileInfoList entries = dir.entryInfoList(filters, QDir::System);
 
-    if (devices.isEmpty()) {
-        qDebug() << "No cameras found!";
-    }
+    for (const QFileInfo &info : entries) {
+        int fd = open(info.filePath().toUtf8().constData(), O_RDWR);
+        if (fd != -1) {
+            v4l2_capability cap;
+            if (ioctl(fd, VIDIOC_QUERYCAP, &cap) != -1) {
+                // 确保它支持视频捕获并且是物理设备
+                if ((cap.capabilities & V4L2_CAP_VIDEO_CAPTURE) && !(cap.capabilities & V4L2_CAP_DEVICE_CAPS & V4L2_CAP_META_CAPTURE)) {
+                    // 检查是否有实际的视频输入设备
+                    v4l2_input input;
+                    bool hasVideoInput = false;
+                    memset(&input, 0, sizeof(input));
+                    input.index = 0;
+                    while (ioctl(fd, VIDIOC_ENUMINPUT, &input) != -1) {
+                        if (input.type == V4L2_INPUT_TYPE_CAMERA) {
+                            hasVideoInput = true;
+                            break;
+                        }
+                        input.index++;
+                    }
 
+                    if (hasVideoInput) {
+                        QString name = QString::fromUtf8((const char *)cap.card);
+                        devices << QString("%1 (%2)").arg(name, info.filePath());
+                    }
+                }
+            }
+            close(fd);
+        }
+    }
     return devices;
 }
 
-QCameraInfo WebcamDevice::findDevice(const QString &description)
+bool WebcamDevice::openDevice(const QString &devicePath)
 {
-    const QList<QCameraInfo> cameras = QCameraInfo::availableCameras();
-    for (const QCameraInfo &cameraInfo : cameras) {
-        if (cameraInfo.description() == description) {
-            return cameraInfo;
-        }
-    }
-    return QCameraInfo();
-}
-
-bool WebcamDevice::openDevice(const QString &deviceDescription)
-{
+    // 确保先关闭之前的设备
     closeDevice();
-    m_captureRetries = 0;
+    qDebug() << "打开设备:" << devicePath;
 
-    m_selectedDevice = findDevice(deviceDescription);
-    if (m_selectedDevice.isNull()) {
-        emit captureError(tr("找不到指定的摄像头设备: %1").arg(deviceDescription));
-        m_deviceSelected = false;
+    QString actualPath = devicePath;
+    int idx = devicePath.indexOf('(');
+    if (idx > 0) {
+        actualPath = devicePath.mid(idx + 1).chopped(1);
+    }
+
+    // 打开设备
+    m_fd = open(actualPath.toUtf8().constData(), O_RDWR);
+    if (m_fd <= 0) {
+        qDebug() << "打开设备失败:" << strerror(errno);
+        m_fd = -1;
         return false;
     }
 
+    // 验证设备是否为视频捕获设备
+    v4l2_capability cap;
+    if (ioctl(m_fd, VIDIOC_QUERYCAP, &cap) == -1) {
+        qDebug() << "查询设备能力失败:" << strerror(errno);
+        close(m_fd);
+        m_fd = -1;
+        return false;
+    }
+
+    if (!(cap.capabilities & V4L2_CAP_VIDEO_CAPTURE)) {
+        qDebug() << "设备不支持视频捕获功能";
+        close(m_fd);
+        m_fd = -1;
+        return false;
+    }
+
+    qDebug() << "设备信息: 驱动=" << reinterpret_cast<const char *>(cap.driver)
+             << "名称=" << reinterpret_cast<const char *>(cap.card);
+
+    // 设置合适的分辨率
+    v4l2_format fmt = {};
+    fmt.type = V4L2_BUF_TYPE_VIDEO_CAPTURE;
+
+    // 先获取当前格式
+    if (ioctl(m_fd, VIDIOC_G_FMT, &fmt) == -1) {
+        qDebug() << "获取当前格式失败:" << strerror(errno);
+    }
+
+    // 更新设备参数
+    m_width = fmt.fmt.pix.width;
+    m_height = fmt.fmt.pix.height;
+    m_pixelFormat = fmt.fmt.pix.pixelformat;
+
+    qDebug() << "当前分辨率:" << m_width << "x" << m_height;
+
+    // 如果当前分辨率太大，设置为较小的分辨率
+    if ((m_width > 640 || m_height > 480) && !m_isInitialized) {
+        fmt.fmt.pix.width = 640;
+        fmt.fmt.pix.height = 480;
+        fmt.fmt.pix.pixelformat = V4L2_PIX_FMT_MJPEG;   // 常见格式
+        fmt.fmt.pix.field = V4L2_FIELD_NONE;
+
+        if (ioctl(m_fd, VIDIOC_S_FMT, &fmt) != -1) {
+            m_width = fmt.fmt.pix.width;
+            m_height = fmt.fmt.pix.height;
+            m_pixelFormat = fmt.fmt.pix.pixelformat;
+            qDebug() << "设置分辨率为:" << m_width << "x" << m_height;
+        } else {
+            qDebug() << "设置分辨率失败，使用当前分辨率";
+        }
+    }
+
+    // 初始化内存映射
+    if (!initMmap()) {
+        qDebug() << "初始化内存映射失败";
+        close(m_fd);
+        m_fd = -1;
+        return false;
+    }
+
+    m_isInitialized = true;
     m_deviceSelected = true;
-    qDebug() << "Selected camera:" << m_selectedDevice.description();
+
+    // 尝试设置摄像头参数
+    setCameraAutoExposure(false);
+    setCameraBrightness(40);
+    setCameraExposure(100);
+
+    // 枚举支持的分辨率
+    enumerateSupportedResolutions();
+
+    // 开始预览
+    startPreview();
+
     return true;
 }
 
-void WebcamDevice::setupCamera()
+bool WebcamDevice::setResolution(int width, int height)
 {
-    if (!m_deviceSelected) {
-        emit captureError(tr("未选择摄像头设备"));
+    qDebug() << "尝试设置分辨率:" << width << "x" << height;
+
+    // 保存原始状态
+    bool wasInitialized = m_isInitialized;
+    bool wasDeviceSelected = m_deviceSelected;
+    bool wasPreviewActive = m_previewTimer.isActive();
+
+    // 保存当前设备路径
+    QString devicePath;
+    if (m_fd > 0) {
+        char devPath[256];
+        sprintf(devPath, "/proc/self/fd/%d", m_fd);
+        char realPath[256] = { 0 };
+        if (readlink(devPath, realPath, sizeof(realPath) - 1) != -1) {
+            devicePath = QString(realPath);
+            qDebug() << "当前设备路径:" << devicePath;
+        }
+    }
+
+    // 如果设备路径为空但已初始化，可能是路径获取失败
+    if (devicePath.isEmpty() && m_fd > 0) {
+        qDebug() << "无法获取当前设备路径，使用备用方法";
+        // 这里可以添加备用方法获取设备路径
+    }
+
+    // 停止预览并完全关闭设备
+    if (wasPreviewActive) {
+        stopPreview();
+    }
+
+    // 彻底关闭设备，释放所有资源
+    closeDevice();
+
+    // 给系统一些时间完全释放设备
+    QThread::msleep(500);
+
+    // 如果没有设备路径，无法继续
+    if (devicePath.isEmpty()) {
+        emit captureError(tr("无法获取设备路径，无法设置分辨率"));
+        return false;
+    }
+
+    // 重新打开设备
+    qDebug() << "重新打开设备:" << devicePath;
+    m_fd = open(devicePath.toUtf8().constData(), O_RDWR);
+    if (m_fd <= 0) {
+        qDebug() << "重新打开设备失败:" << strerror(errno);
+        emit captureError(tr("重新打开设备失败"));
+        return false;
+    }
+
+    // 验证设备是否为视频捕获设备
+    v4l2_capability cap;
+    if (ioctl(m_fd, VIDIOC_QUERYCAP, &cap) == -1) {
+        qDebug() << "验证设备失败:" << strerror(errno);
+        close(m_fd);
+        m_fd = -1;
+        return false;
+    }
+
+    // 设置格式
+    v4l2_format fmt = {};
+    fmt.type = V4L2_BUF_TYPE_VIDEO_CAPTURE;
+    fmt.fmt.pix.width = width;
+    fmt.fmt.pix.height = height;
+    fmt.fmt.pix.pixelformat = m_pixelFormat;   // 使用之前的像素格式
+    fmt.fmt.pix.field = V4L2_FIELD_NONE;
+
+    bool formatSet = false;
+    if (ioctl(m_fd, VIDIOC_S_FMT, &fmt) != -1) {
+        formatSet = true;
+        qDebug() << "成功设置分辨率:" << fmt.fmt.pix.width << "x" << fmt.fmt.pix.height;
+    } else {
+        qDebug() << "设置分辨率失败，尝试其他像素格式";
+
+        // 尝试其他常见像素格式
+        uint32_t pixelFormatsToTry[] = {
+            V4L2_PIX_FMT_YUYV,
+            V4L2_PIX_FMT_MJPEG,
+            V4L2_PIX_FMT_YUV420,
+            V4L2_PIX_FMT_RGB24
+        };
+
+        for (uint32_t format : pixelFormatsToTry) {
+            fmt.fmt.pix.pixelformat = format;
+            if (ioctl(m_fd, VIDIOC_S_FMT, &fmt) != -1) {
+                formatSet = true;
+                qDebug() << "使用像素格式" << format << "成功设置分辨率";
+                break;
+            }
+        }
+    }
+
+    if (!formatSet) {
+        qDebug() << "所有尝试都失败，无法设置分辨率";
+        close(m_fd);
+        m_fd = -1;
+        emit captureError(tr("无法设置请求的分辨率"));
+        return false;
+    }
+
+    // 更新设备参数
+    m_width = fmt.fmt.pix.width;
+    m_height = fmt.fmt.pix.height;
+    m_pixelFormat = fmt.fmt.pix.pixelformat;
+
+    // 初始化内存映射
+    if (!initMmap()) {
+        qDebug() << "初始化内存映射失败";
+        close(m_fd);
+        m_fd = -1;
+        emit captureError(tr("内存映射失败"));
+        return false;
+    }
+
+    // 调整摄像头参数以解决图像过亮的问题
+    //adjustCommonCameraSettings();
+
+    // 恢复设备状态
+    m_isInitialized = true;
+    m_deviceSelected = wasDeviceSelected;
+
+    // 重新枚举分辨率并通知UI
+    enumerateSupportedResolutions();
+
+    // 如果之前在预览，恢复预览
+    if (wasPreviewActive) {
+        startPreview();
+    }
+
+    qDebug() << "成功完成分辨率设置:" << m_width << "x" << m_height;
+    return true;
+}
+
+bool WebcamDevice::startCapturing()
+{
+    if (m_fd <= 0 || !m_isInitialized) {
+        qDebug() << "无法启动捕获：设备未初始化或文件描述符无效";
+        emit captureError(tr("设备未正确初始化"));
+        return false;
+    }
+
+    // 确保在入队缓冲区前流已停止
+    v4l2_buf_type stopType = V4L2_BUF_TYPE_VIDEO_CAPTURE;
+    ioctl(m_fd, VIDIOC_STREAMOFF, &stopType);
+
+    // 等待设备稳定
+    QThread::msleep(100);
+
+    // 打印缓冲区状态进行调试
+    qDebug() << "缓冲区状态:";
+    for (int i = 0; i < 4; i++) {
+        qDebug() << "  缓冲区" << i << ": 地址=" << m_buffers[i] << " 大小=" << m_bufferSizes[i];
+    }
+
+    // 记录使用的缓冲区数量，避免访问未分配的缓冲区
+    int validBufferCount = 0;
+    for (int i = 0; i < 4; i++) {
+        if (m_buffers[i] && m_bufferSizes[i] > 0) {
+            validBufferCount++;
+        } else {
+            break;   // 假设缓冲区是连续分配的
+        }
+    }
+
+    if (validBufferCount == 0) {
+        qDebug() << "没有有效的缓冲区可用，尝试重新初始化内存映射";
+        if (!initMmap()) {
+            emit captureError(tr("缓冲区无法初始化"));
+            return false;
+        }
+
+        // 重新检查缓冲区
+        validBufferCount = 0;
+        for (int i = 0; i < 4; i++) {
+            if (m_buffers[i] && m_bufferSizes[i] > 0) {
+                validBufferCount++;
+            } else {
+                break;
+            }
+        }
+
+        if (validBufferCount == 0) {
+            qDebug() << "重新初始化后仍无有效缓冲区";
+            emit captureError(tr("缓冲区重新初始化失败"));
+            return false;
+        }
+    }
+
+    qDebug() << "使用" << validBufferCount << "个缓冲区开始捕获";
+
+    // 入队所有缓冲区
+    for (int i = 0; i < validBufferCount; i++) {
+        struct v4l2_buffer buf;
+        memset(&buf, 0, sizeof(buf));
+        buf.type = V4L2_BUF_TYPE_VIDEO_CAPTURE;
+        buf.memory = V4L2_MEMORY_MMAP;
+        buf.index = i;
+
+        int result = ioctl(m_fd, VIDIOC_QBUF, &buf);
+        if (result == -1) {
+            qDebug() << "入队缓冲区" << i << "失败: " << strerror(errno) << " (错误码:" << errno << ")";
+
+            // 清理已入队的缓冲区
+            stopCapturing();
+
+            // 提供更多诊断信息
+            if (errno == EINVAL) {
+                qDebug() << "  错误原因: 无效参数 - 可能缓冲区索引超出范围或内存类型不匹配";
+            } else if (errno == ENOMEM) {
+                qDebug() << "  错误原因: 内存不足";
+            } else if (errno == EIO) {
+                qDebug() << "  错误原因: I/O错误 - 设备可能已断开连接";
+            }
+
+            emit captureError(tr("入队缓冲区失败: %1").arg(strerror(errno)));
+            return false;
+        }
+
+        qDebug() << "成功入队缓冲区" << i;
+    }
+
+    // 启动视频流
+    v4l2_buf_type type = V4L2_BUF_TYPE_VIDEO_CAPTURE;
+    if (ioctl(m_fd, VIDIOC_STREAMON, &type) == -1) {
+        qDebug() << "启动视频流失败:" << strerror(errno);
+        emit captureError(tr("启动视频流失败: %1").arg(strerror(errno)));
+        return false;
+    }
+
+    qDebug() << "成功启动视频捕获流";
+    return true;
+}
+
+void WebcamDevice::stopCapturing()
+{
+    v4l2_buf_type type = V4L2_BUF_TYPE_VIDEO_CAPTURE;
+    ioctl(m_fd, VIDIOC_STREAMOFF, &type);
+}
+
+void WebcamDevice::startPreview()
+{
+    if (!m_isInitialized) {
         return;
     }
 
-    // 创建相机实例
-    m_camera = new QCamera(m_selectedDevice, this);
-    if (!m_camera) {
-        emit captureError(tr("无法创建摄像头实例"));
+    if (!startCapturing()) {
         return;
     }
 
-    // 创建图像捕获器
-    m_imageCapture = new QCameraImageCapture(m_camera, this);
-    if (!m_imageCapture) {
-        emit captureError(tr("无法创建图像捕获实例"));
-        delete m_camera;
-        m_camera = nullptr;
+    // 确保预览开始前应用适当的摄像头参数设置
+    //adjustCommonCameraSettings();
+
+    // 为预览设置适当的亮度和曝光
+    //    setCameraAutoExposure(false);   // 禁用自动曝光
+    //    setCameraBrightness(40);   // 降低亮度
+    //    setCameraExposure(100);   // 降低曝光
+
+    // 清空最新帧
+    {
+        QMutexLocker locker(&m_frameMutex);
+        m_latestFrame = QImage();
+    }
+
+    qDebug() << "预览开始，已应用相机参数";
+    m_previewTimer.start();
+}
+
+void WebcamDevice::stopPreview()
+{
+    m_previewTimer.stop();
+    if (m_isInitialized) {
+        stopCapturing();
+    }
+}
+
+void WebcamDevice::updatePreview()
+{
+    if (!m_isInitialized || m_fd <= 0) {
         return;
     }
 
-    // 设置捕获设置
-    QImageEncoderSettings imageSettings;
-    imageSettings.setCodec("image/jpeg");
-    imageSettings.setResolution(1280, 720);
-    imageSettings.setQuality(QMultimedia::NormalQuality);
-    m_imageCapture->setEncodingSettings(imageSettings);
+    v4l2_buffer buf = {};
+    buf.type = V4L2_BUF_TYPE_VIDEO_CAPTURE;
+    buf.memory = V4L2_MEMORY_MMAP;
 
-    // 连接所有可能的捕获信号
-    connect(m_imageCapture, &QCameraImageCapture::imageCaptured,
-            this, &WebcamDevice::handleImageCaptured);
+    if (ioctl(m_fd, VIDIOC_DQBUF, &buf) == -1) {
+        qDebug() << "预览更新出错:" << strerror(errno);
+        return;
+    }
 
-    // 图像已保存信号
-    connect(m_imageCapture, &QCameraImageCapture::imageSaved,
-            this, [this](int id, const QString &fileName) {
-                qDebug() << "Image saved to:" << fileName;
-                // 从保存的文件加载图像
-                QImage image(fileName);
-                if (!image.isNull()) {
-                    emit captureCompleted(image);
-                    // 可选：删除临时文件
-                    QFile::remove(fileName);
-                } else {
-                    emit captureError(tr("无法加载已保存的图像"));
-                }
-            });
+    // 确保缓冲区索引有效
+    if (buf.index >= 4 || !m_buffers[buf.index]) {
+        qDebug() << "无效的缓冲区索引:" << buf.index;
+        ioctl(m_fd, VIDIOC_QBUF, &buf);   // 尝试放回缓冲区
+        return;
+    }
 
-    // 错误处理
-    connect(m_imageCapture, static_cast<void (QCameraImageCapture::*)(int, QCameraImageCapture::Error, const QString &)>(&QCameraImageCapture::error),
-            this, &WebcamDevice::handleCaptureError);
+    QImage image = frameToQImage(m_buffers[buf.index], m_width, m_height, m_pixelFormat);
 
-    connect(m_camera, static_cast<void (QCamera::*)(QCamera::Error)>(&QCamera::error),
-            this, &WebcamDevice::handleCameraError);
+    // 放回缓冲区 - 不论图像转换是否成功都要放回
+    if (ioctl(m_fd, VIDIOC_QBUF, &buf) == -1) {
+        qDebug() << "放回缓冲区失败:" << strerror(errno);
+        return;
+    }
 
-    // 状态变化处理
-    connect(m_camera, &QCamera::statusChanged,
-            this, &WebcamDevice::handleCameraStatusChanged);
-
-    connect(m_camera, &QCamera::stateChanged,
-            this, &WebcamDevice::handleCameraStateChanged);
-
-    // 设置捕获模式
-    m_camera->setCaptureMode(QCamera::CaptureStillImage);
-
-    // 确保捕获到文件
-    m_imageCapture->setCaptureDestination(QCameraImageCapture::CaptureToFile);
-
-    qDebug() << "Camera setup completed";
-    qDebug() << "Supported capture destinations:" << m_imageCapture->isCaptureDestinationSupported(QCameraImageCapture::CaptureToFile);
-    qDebug() << "Capture destination:" << m_imageCapture->captureDestination();
+    if (!image.isNull()) {
+        // 保存调整后的图像作为最新帧，用于捕获
+        QMutexLocker locker(&m_frameMutex);
+        m_latestFrame = image;
+        m_previewWidget->updateFrame(image);
+    }
 }
 
 void WebcamDevice::captureImage()
 {
-    qDebug() << "captureImage called";
-    cleanupCamera();
-    setupCamera();
-
-    if (!m_camera || !m_imageCapture) {
-        qDebug() << "Failed to initialize camera or image capture!";
-        emit captureError(tr("摄像头未正确初始化"));
+    // 检查设备状态
+    if (!m_isInitialized || m_fd <= 0) {
+        emit captureError(tr("设备未初始化或文件描述符无效"));
         return;
     }
 
-    m_captureRetries = 0;
     emit captureStarted();
+    qDebug() << "开始捕获图像...";
 
-    // 打印相机信息
-    qDebug() << "Starting camera:" << m_selectedDevice.description();
-    qDebug() << "Camera location:" << m_selectedDevice.position();
-    qDebug() << "Camera orientation:" << m_selectedDevice.orientation();
+    // 检查预览是否在运行
+    bool previewWasRunning = m_previewTimer.isActive();
 
-    // 设置捕获模式
-    m_camera->setCaptureMode(QCamera::CaptureStillImage);
+    // 如果预览未运行，启动一个临时捕获流程
+    if (!previewWasRunning) {
+        qDebug() << "预览未运行，设置临时捕获流程...";
 
-    // 启动相机
-    qDebug() << "Starting camera...";
-    m_camera->start();
+        // 确保清理当前状态
+        stopCapturing();
+        QThread::msleep(100);
 
-    // 检查相机是否成功启动
-    QTimer::singleShot(100, this, [this]() {
-        qDebug() << "Camera state after start:" << m_camera->state();
-        qDebug() << "Camera status after start:" << m_camera->status();
-    });
-}
+        // 应用捕获前的相机设置
+        //        setCameraAutoExposure(false);
+        //        setCameraBrightness(40);
+        //        setCameraExposure(100);
 
-void WebcamDevice::tryCapture()
-{
-    if (!m_camera || !m_imageCapture) {
-        emit captureError(tr("摄像头或捕获器无效"));
-        return;
-    }
+        // 开始捕获流程
+        if (!startCapturing()) {
+            emit captureError(tr("无法启动视频流，捕获失败"));
+            return;
+        }
 
-    if (m_captureRetries >= MAX_CAPTURE_RETRIES) {
-        emit captureError(tr("达到最大重试次数，捕获失败"));
-        closeDevice();
-        return;
-    }
-
-    // 检查相机状态
-    if (m_camera->status() != QCamera::ActiveStatus) {
-        qDebug() << "Camera not active, current status:" << m_camera->status();
-        m_captureRetries++;
-        m_captureTimer.start(1000);
-        return;
-    }
-
-    // 检查是否准备好捕获
-    if (!m_imageCapture->isReadyForCapture()) {
-        qDebug() << "Camera not ready for capture";
-        m_captureRetries++;
-        m_captureTimer.start(1000);
-        return;
-    }
-
-    qDebug() << "Attempting to capture image... (Attempt" << m_captureRetries + 1
-             << "of" << MAX_CAPTURE_RETRIES << ")";
-
-    // 锁定相机设置
-    m_camera->searchAndLock();
-
-    // 生成临时文件路径
-    QString tempPath = QDir::temp().absoluteFilePath(QString("webcam_capture_%1.jpg").arg(QDateTime::currentMSecsSinceEpoch()));
-    qDebug() << "Capturing to:" << tempPath;
-
-    // 捕获到临时文件
-    int id = m_imageCapture->capture(tempPath);
-    qDebug() << "Capture requested with id:" << id;
-
-    // 解锁相机设置
-    m_camera->unlock();
-}
-
-void WebcamDevice::handleCameraStateChanged(QCamera::State state)
-{
-    qDebug() << "Camera state changed to:" << state;
-
-    switch (state) {
-    case QCamera::ActiveState:
-        qDebug() << "Camera is active, waiting for it to stabilize...";
-        // 给相机一些时间稳定
-        QTimer::singleShot(2000, this, &WebcamDevice::tryCapture);
-        break;
-
-    case QCamera::UnloadedState:
-        qDebug() << "Camera is unloaded";
-        break;
-
-    case QCamera::LoadedState:
-        qDebug() << "Camera is loaded but not active";
-        break;
-    }
-}
-
-void WebcamDevice::handleCameraStatusChanged(QCamera::Status status)
-{
-    qDebug() << "Camera status changed to:" << status;
-
-    switch (status) {
-    case QCamera::UnavailableStatus:
-        emit captureError(tr("摄像头不可用"));
-        closeDevice();
-        break;
-    case QCamera::StartingStatus:
-        qDebug() << "Camera is starting...";
-        break;
-    case QCamera::StoppingStatus:
-        qDebug() << "Camera is stopping...";
-        break;
-    case QCamera::StandbyStatus:
-        qDebug() << "Camera is on standby...";
-        break;
-    case QCamera::LoadingStatus:
-        qDebug() << "Camera is loading...";
-        break;
-    case QCamera::LoadedStatus:
-        qDebug() << "Camera is loaded...";
-        break;
-    case QCamera::ActiveStatus:
-        qDebug() << "Camera is active and ready";
-        QTimer::singleShot(500, this, &WebcamDevice::tryCapture);
-        break;
-    case QCamera::UnloadingStatus:
-        qDebug() << "Camera is unloading...";
-        break;
-    }
-}
-
-void WebcamDevice::handleImageCaptured(int id, const QImage &preview)
-{
-    qDebug() << "Image captured (preview) with id:" << id;
-
-    if (!preview.isNull()) {
-        qDebug() << "Preview image size:" << preview.size();
-        // 可以选择使用预览图像
-        // emit captureCompleted(preview);
-    }
-    // 注意：我们等待 imageSaved 信号来获取完整质量的图像
-}
-
-void WebcamDevice::handleCaptureError(int id, QCameraImageCapture::Error error, const QString &errorString)
-{
-    qDebug() << "Capture error occurred:";
-    qDebug() << "  ID:" << id;
-    qDebug() << "  Error:" << error;
-    qDebug() << "  Error string:" << errorString;
-
-    if (m_captureRetries < MAX_CAPTURE_RETRIES) {
-        m_captureRetries++;
-        qDebug() << "Retrying capture... (Attempt" << m_captureRetries << "of" << MAX_CAPTURE_RETRIES << ")";
-        m_captureTimer.start(1000);
+        // 等待设备准备好
+        QThread::msleep(300);
     } else {
-        qDebug() << "Max retries reached, giving up";
-        emit captureError(tr("图像捕获失败: %1").arg(errorString));
-        closeDevice();
+        // 如果预览正在运行，暂停预览计时器但保持流活动
+        m_previewTimer.stop();
     }
-}
 
-void WebcamDevice::handleCameraError(QCamera::Error error)
-{
-    QString errorMessage;
-    if (m_camera) {
-        errorMessage = m_camera->errorString();
+    // 尝试从设备直接获取一帧，无论预览是否在运行
+    for (int retry = 0; retry < 3; retry++) {
+        v4l2_buffer buf = {};
+        buf.type = V4L2_BUF_TYPE_VIDEO_CAPTURE;
+        buf.memory = V4L2_MEMORY_MMAP;
+
+        qDebug() << "尝试直接从设备获取帧...第" << (retry + 1) << "次尝试";
+
+        if (ioctl(m_fd, VIDIOC_DQBUF, &buf) == -1) {
+            qDebug() << "获取帧失败:" << strerror(errno);
+            if (retry == 2) {   // 最后一次尝试失败
+                // 尝试使用现有的预览帧（如果有的话）
+                QMutexLocker locker(&m_frameMutex);
+                if (!m_latestFrame.isNull()) {
+                    qDebug() << "获取帧失败，但使用现有的预览帧";
+                    QImage capturedImage = m_latestFrame.copy();
+                    locker.unlock();
+
+                    // 恢复预览状态
+                    if (previewWasRunning) {
+                        m_previewTimer.start();
+                    } else {
+                        stopCapturing();
+                    }
+
+                    emit captureCompleted(capturedImage);
+                    return;
+                }
+
+                // 如果没有可用的预览帧，报告错误
+                emit captureError(tr("无法获取图像帧"));
+
+                // 恢复预览状态
+                if (previewWasRunning) {
+                    m_previewTimer.start();
+                } else {
+                    stopCapturing();
+                }
+                return;
+            }
+            // 重试前短暂等待
+            QThread::msleep(100);
+            continue;
+        }
+
+        // 确保缓冲区索引有效
+        if (buf.index >= 4 || !m_buffers[buf.index]) {
+            qDebug() << "无效的缓冲区索引:" << buf.index;
+            ioctl(m_fd, VIDIOC_QBUF, &buf);   // 放回缓冲区
+            continue;
+        }
+
+        // 成功获取到帧
+        QImage image = frameToQImage(m_buffers[buf.index], m_width, m_height, m_pixelFormat);
+
+        // 放回缓冲区
+        ioctl(m_fd, VIDIOC_QBUF, &buf);
+
+        if (!image.isNull()) {
+            // 保存当前帧到预览缓冲区
+            {
+                QMutexLocker locker(&m_frameMutex);
+                m_latestFrame = image;
+            }
+
+            // 如果预览之前是运行的，恢复预览计时器
+            if (previewWasRunning) {
+                m_previewTimer.start();
+            } else {
+                stopCapturing();
+            }
+
+            qDebug() << "成功捕获图像";
+            emit captureCompleted(image);
+            return;
+        } else {
+            qDebug() << "图像转换失败，重试";
+        }
+
+        // 重试前短暂等待
+        QThread::msleep(100);
+    }
+
+    // 如果所有尝试都失败
+    emit captureError(tr("无法捕获有效图像，请检查摄像头连接"));
+
+    // 恢复预览状态
+    if (previewWasRunning) {
+        m_previewTimer.start();
     } else {
-        errorMessage = tr("未知错误");
+        stopCapturing();
     }
-
-    qDebug() << "Camera error:" << error << "-" << errorMessage;
-    emit captureError(tr("摄像头错误: %1").arg(errorMessage));
-    closeDevice();
 }
 
-void WebcamDevice::cleanupCamera()
+QWidget *WebcamDevice::getVideoWidget()
 {
-    if (m_camera) {
-        m_camera->stop();
+    return m_previewWidget;
+}
+
+QImage WebcamDevice::frameToQImage(const void *data, int width, int height, int format)
+{
+    if (!data) {
+        qDebug() << "帧数据为空";
+        return QImage();
     }
 
-    delete m_imageCapture;
-    m_imageCapture = nullptr;
+    qDebug() << "转换帧数据:" << width << "x" << height << "格式:" << format;
 
-    delete m_camera;
-    m_camera = nullptr;
+    if (format == V4L2_PIX_FMT_YUYV) {
+        QImage image(width, height, QImage::Format_RGB888);
+        const uint8_t *yuyv = static_cast<const uint8_t *>(data);
+
+        // 安全检查 - 确保内存足够
+        size_t expectedSize = width * height * 2;   // YUYV格式每个像素需要2字节
+        if (expectedSize > 0) {   // 合理的大小上限
+            try {
+                for (int y = 0; y < height; y++) {
+                    for (int x = 0; x < width; x += 2) {
+                        int i = y * width * 2 + x * 2;
+
+                        // 边界检查
+                        if (i + 3 >= expectedSize) {
+                            qDebug() << "帧数据边界检查失败，可能数据不完整";
+                            continue;
+                        }
+
+                        int y0 = yuyv[i];
+                        int u = yuyv[i + 1];
+                        int y1 = yuyv[i + 2];
+                        int v = yuyv[i + 3];
+
+                        // 亮度校正 - 降低亮度以解决过亮问题
+                        // 将Y值降低20%左右
+                        y0 = static_cast<int>(y0 * 0.8);
+                        y1 = static_cast<int>(y1 * 0.8);
+
+                        int r, g, b;
+
+                        // 第一个像素 - 使用更准确的YUV到RGB转换公式
+                        r = static_cast<int>(y0 + 1.370705 * (v - 128));
+                        g = static_cast<int>(y0 - 0.337633 * (u - 128) - 0.698001 * (v - 128));
+                        b = static_cast<int>(y0 + 1.732446 * (u - 128));
+
+                        r = qBound(0, r, 255);
+                        g = qBound(0, g, 255);
+                        b = qBound(0, b, 255);
+
+                        if (x < width) {   // 安全检查
+                            image.setPixel(x, y, qRgb(r, g, b));
+                        }
+
+                        // 第二个像素 - 使用相同的转换公式
+                        r = static_cast<int>(y1 + 1.370705 * (v - 128));
+                        g = static_cast<int>(y1 - 0.337633 * (u - 128) - 0.698001 * (v - 128));
+                        b = static_cast<int>(y1 + 1.732446 * (u - 128));
+
+                        r = qBound(0, r, 255);
+                        g = qBound(0, g, 255);
+                        b = qBound(0, b, 255);
+
+                        if (x + 1 < width) {   // 安全检查
+                            image.setPixel(x + 1, y, qRgb(r, g, b));
+                        }
+                    }
+                }
+                return image;
+            } catch (const std::exception &e) {
+                qDebug() << "转换帧时发生异常:" << e.what();
+            } catch (...) {
+                qDebug() << "转换帧时发生未知异常";
+            }
+        } else {
+            qDebug() << "不合理的帧大小:" << expectedSize;
+        }
+    } else if (format == V4L2_PIX_FMT_MJPEG) {
+        // 获取实际数据大小，而不是使用计算值
+        v4l2_buffer buf;
+        memset(&buf, 0, sizeof(buf));
+        buf.type = V4L2_BUF_TYPE_VIDEO_CAPTURE;
+        buf.memory = V4L2_MEMORY_MMAP;
+        buf.index = m_currentBuffer;
+        
+        size_t actualSize = 0;
+        if (ioctl(m_fd, VIDIOC_QUERYBUF, &buf) != -1) {
+            actualSize = buf.bytesused;
+            qDebug() << "MJPEG实际数据大小:" << actualSize;
+        } else {
+            actualSize = width * height;
+            qDebug() << "使用估计大小:" << actualSize;
+        }
+        
+        QImage image;
+        if (image.loadFromData(static_cast<const uchar *>(data), actualSize, "JPEG")) {
+            return image;
+        }
+    } else {
+        qDebug() << "不支持的像素格式:" << format;
+    }
+
+    return QImage();
 }
 
 void WebcamDevice::closeDevice()
 {
-    m_captureTimer.stop();
-    cleanupCamera();
+    // 先停止预览和流
+    m_previewTimer.stop();
+    stopCapturing();
+
+    // 清空最新的预览帧
+    {
+        QMutexLocker locker(&m_frameMutex);
+        m_latestFrame = QImage();
+    }
+
+    // 释放内存映射
+    uninitMmap();
+
+    // 关闭文件描述符
+    if (m_fd > 0) {
+        close(m_fd);
+        qDebug() << "关闭设备文件描述符:" << m_fd;
+        m_fd = -1;
+    }
+
     m_deviceSelected = false;
-    m_captureRetries = 0;
+    m_isInitialized = false;
+}
+
+// 新增方法：获取摄像头支持的最大分辨率
+QSize WebcamDevice::getMaxResolution()
+{
+    if (m_fd <= 0) {
+        qDebug() << "文件描述符无效，无法获取最大分辨率";
+        return QSize(640, 480);   // 返回默认值
+    }
+
+    // 存储最大分辨率
+    int maxWidth = 0;
+    int maxHeight = 0;
+    bool resolutionsFound = false;
+
+    // 首先尝试获取设备支持的所有离散分辨率
+    QList<QSize> supportedSizes;
+    v4l2_frmsizeenum frmsize;
+    memset(&frmsize, 0, sizeof(frmsize));
+    frmsize.pixel_format = m_pixelFormat;
+
+    qDebug() << "尝试获取设备支持的分辨率列表:";
+
+    for (frmsize.index = 0; ioctl(m_fd, VIDIOC_ENUM_FRAMESIZES, &frmsize) == 0; frmsize.index++) {
+        resolutionsFound = true;
+        if (frmsize.type == V4L2_FRMSIZE_TYPE_DISCRETE) {
+            supportedSizes.append(QSize(frmsize.discrete.width, frmsize.discrete.height));
+            qDebug() << "  支持的分辨率:" << frmsize.discrete.width << "x" << frmsize.discrete.height;
+        } else if (frmsize.type == V4L2_FRMSIZE_TYPE_STEPWISE || frmsize.type == V4L2_FRMSIZE_TYPE_CONTINUOUS) {
+            // 对于可变分辨率，我们选择一个安全的较大值
+            qDebug() << "  支持范围:" << frmsize.stepwise.min_width << "x" << frmsize.stepwise.min_height
+                     << " 到 " << frmsize.stepwise.max_width << "x" << frmsize.stepwise.max_height;
+
+            // 对于可变分辨率，限制最大值为1280x720，除非确认设备支持更高
+            int maxW = frmsize.stepwise.max_width;
+            int maxH = frmsize.stepwise.max_height;
+
+            // 如果分辨率过高，可能会导致问题，我们限制为常见的高清分辨率
+            if (maxW > 1920 || maxH > 1080) {
+                maxW = 1280;   // 默认限制为720p
+                maxH = 720;
+            }
+
+            maxWidth = maxW;
+            maxHeight = maxH;
+
+            qDebug() << "  选择使用分辨率:" << maxWidth << "x" << maxHeight;
+            return QSize(maxWidth, maxHeight);
+        }
+    }
+
+    // 如果找到了离散分辨率，找出其中最大的（但不超过1280x720，除非明确支持）
+    if (resolutionsFound && !supportedSizes.isEmpty()) {
+        // 按照分辨率（像素总数）排序
+        std::sort(supportedSizes.begin(), supportedSizes.end(),
+                  [](const QSize &a, const QSize &b) {
+                      return a.width() * a.height() > b.width() * b.height();
+                  });
+
+        // 选择最大但不超过720p的分辨率（除非明确支持更高）
+        for (const QSize &size : supportedSizes) {
+            // 如果我们找到了一个合理的分辨率，就使用它
+            maxWidth = size.width();
+            maxHeight = size.height();
+
+            // 如果发现至少有720p的分辨率，就直接使用它
+            if (maxWidth >= 1280 && maxHeight >= 720) {
+                // 优先选择720p或1080p这样的标准分辨率
+                if (maxWidth == 1280 && maxHeight == 720) {
+                    qDebug() << "选择标准分辨率:" << maxWidth << "x" << maxHeight;
+                    return QSize(maxWidth, maxHeight);
+                }
+
+                if (maxWidth == 1920 && maxHeight == 1080) {
+                    qDebug() << "选择标准分辨率:" << maxWidth << "x" << maxHeight;
+                    return QSize(maxWidth, maxHeight);
+                }
+
+                // 如果找不到完全匹配的标准分辨率，就使用列表中的第一个（最大的）
+                qDebug() << "选择最大分辨率:" << supportedSizes.first().width() << "x" << supportedSizes.first().height();
+                return supportedSizes.first();
+            }
+
+            // 如果没有找到够大的分辨率，就使用列表中最大的
+            break;
+        }
+    }
+
+    // 如果前面的方法失败，尝试获取当前格式
+    if (maxWidth == 0 || maxHeight == 0) {
+        v4l2_format fmt;
+        memset(&fmt, 0, sizeof(fmt));
+        fmt.type = V4L2_BUF_TYPE_VIDEO_CAPTURE;
+
+        if (ioctl(m_fd, VIDIOC_G_FMT, &fmt) == 0) {
+            maxWidth = fmt.fmt.pix.width;
+            maxHeight = fmt.fmt.pix.height;
+            qDebug() << "使用当前分辨率:" << maxWidth << "x" << maxHeight;
+        }
+    }
+
+    // 如果还是获取不到，返回安全的默认值
+    if (maxWidth <= 0 || maxHeight <= 0) {
+        maxWidth = 640;
+        maxHeight = 480;
+        qDebug() << "使用默认分辨率:" << maxWidth << "x" << maxHeight;
+    }
+
+    return QSize(maxWidth, maxHeight);
+}
+
+// 新增方法：尝试选择最佳像素格式
+bool WebcamDevice::selectBestPixelFormat()
+{
+    if (m_fd == -1) {
+        return false;
+    }
+
+    // 优先级顺序：MJPEG > YUYV > 其他
+    const uint32_t preferredFormats[] = {
+        V4L2_PIX_FMT_MJPEG,   // MJPEG性能更好
+        V4L2_PIX_FMT_YUYV,   // 常见格式
+        V4L2_PIX_FMT_YUV420,   // 另一种常见格式
+        V4L2_PIX_FMT_RGB24   // RGB格式
+    };
+
+    // 获取当前格式作为备选
+    v4l2_format currentFmt = {};
+    currentFmt.type = V4L2_BUF_TYPE_VIDEO_CAPTURE;
+    if (ioctl(m_fd, VIDIOC_G_FMT, &currentFmt) != -1) {
+        qDebug() << "当前像素格式:" << currentFmt.fmt.pix.pixelformat;
+    }
+
+    // 遍历可用的像素格式
+    v4l2_fmtdesc fmtdesc = {};
+    fmtdesc.type = V4L2_BUF_TYPE_VIDEO_CAPTURE;
+
+    QVector<uint32_t> supportedFormats;
+
+    for (fmtdesc.index = 0; ioctl(m_fd, VIDIOC_ENUM_FMT, &fmtdesc) != -1; fmtdesc.index++) {
+        qDebug() << "支持的像素格式:" << fmtdesc.pixelformat
+                 << "描述:" << reinterpret_cast<const char *>(fmtdesc.description);
+        supportedFormats.append(fmtdesc.pixelformat);
+    }
+
+    // 按优先级尝试设置
+    for (uint32_t format : preferredFormats) {
+        if (supportedFormats.contains(format)) {
+            v4l2_format fmt = {};
+            fmt.type = V4L2_BUF_TYPE_VIDEO_CAPTURE;
+
+            // 先获取当前格式
+            if (ioctl(m_fd, VIDIOC_G_FMT, &fmt) == -1) {
+                continue;
+            }
+
+            // 只修改像素格式，保留其他参数
+            fmt.fmt.pix.pixelformat = format;
+
+            if (ioctl(m_fd, VIDIOC_S_FMT, &fmt) != -1) {
+                if (fmt.fmt.pix.pixelformat == format) {
+                    m_pixelFormat = format;
+                    qDebug() << "成功设置像素格式:" << format;
+                    return true;
+                }
+            }
+        }
+    }
+
+    // 如果所有尝试都失败，至少确保我们知道当前的像素格式
+    v4l2_format fmt = {};
+    fmt.type = V4L2_BUF_TYPE_VIDEO_CAPTURE;
+    if (ioctl(m_fd, VIDIOC_G_FMT, &fmt) != -1) {
+        m_pixelFormat = fmt.fmt.pix.pixelformat;
+        qDebug() << "使用当前像素格式:" << m_pixelFormat;
+        return true;
+    }
+
+    return false;
+}
+
+// 新增函数：诊断摄像头设备问题
+void WebcamDevice::diagnoseCameraIssues()
+{
+    if (m_fd == -1) {
+        qDebug() << "无法诊断: 设备未打开";
+        return;
+    }
+
+    qDebug() << "开始摄像头诊断...";
+
+    // 检查设备权限
+    struct stat st;
+    if (fstat(m_fd, &st) == 0) {
+        qDebug() << "设备权限:"
+                 << (st.st_mode & S_IRUSR ? "r" : "-")
+                 << (st.st_mode & S_IWUSR ? "w" : "-")
+                 << (st.st_mode & S_IXUSR ? "x" : "-")
+                 << " 所有者:" << st.st_uid;
+
+        if (!(st.st_mode & S_IRUSR) || !(st.st_mode & S_IWUSR)) {
+            qDebug() << "警告: 设备没有足够的读写权限";
+        }
+    }
+
+    // 检查内存映射支持
+    v4l2_capability cap;
+    if (ioctl(m_fd, VIDIOC_QUERYCAP, &cap) != -1) {
+        qDebug() << "设备能力:";
+        qDebug() << "  视频捕获: " << ((cap.capabilities & V4L2_CAP_VIDEO_CAPTURE) ? "是" : "否");
+        qDebug() << "  视频输出: " << ((cap.capabilities & V4L2_CAP_VIDEO_OUTPUT) ? "是" : "否");
+        qDebug() << "  流支持: " << ((cap.capabilities & V4L2_CAP_STREAMING) ? "是" : "否");
+        qDebug() << "  读写支持: " << ((cap.capabilities & V4L2_CAP_READWRITE) ? "是" : "否");
+
+        if (!(cap.capabilities & V4L2_CAP_STREAMING)) {
+            qDebug() << "错误: 设备不支持流操作，无法使用内存映射";
+        }
+    }
+
+    // 检查当前格式
+    v4l2_format fmt;
+    memset(&fmt, 0, sizeof(fmt));
+    fmt.type = V4L2_BUF_TYPE_VIDEO_CAPTURE;
+    if (ioctl(m_fd, VIDIOC_G_FMT, &fmt) != -1) {
+        qDebug() << "当前格式:";
+        qDebug() << "  宽度: " << fmt.fmt.pix.width;
+        qDebug() << "  高度: " << fmt.fmt.pix.height;
+        qDebug() << "  像素格式: " << fmt.fmt.pix.pixelformat;
+        qDebug() << "  字段类型: " << fmt.fmt.pix.field;
+        qDebug() << "  每行字节数: " << fmt.fmt.pix.bytesperline;
+        qDebug() << "  图像大小: " << fmt.fmt.pix.sizeimage << " 字节";
+
+        if (fmt.fmt.pix.bytesperline == 0 || fmt.fmt.pix.sizeimage == 0) {
+            qDebug() << "警告: 无效的图像大小参数";
+        }
+    }
+
+    // 检查系统内存
+    struct sysinfo sys_info;
+    if (sysinfo(&sys_info) == 0) {
+        unsigned long freeRam = sys_info.freeram * sys_info.mem_unit / (1024 * 1024);
+        qDebug() << "系统空闲内存: " << freeRam << " MB";
+
+        if (freeRam < 50) {
+            qDebug() << "警告: 系统内存不足，可能无法分配缓冲区";
+        }
+    }
+
+    // 尝试只使用一个缓冲区
+    v4l2_requestbuffers req = {};
+    req.count = 1;
+    req.type = V4L2_BUF_TYPE_VIDEO_CAPTURE;
+    req.memory = V4L2_MEMORY_MMAP;
+
+    qDebug() << "尝试请求1个缓冲区...";
+    if (ioctl(m_fd, VIDIOC_REQBUFS, &req) == -1) {
+        qDebug() << "请求缓冲区失败: " << strerror(errno);
+
+        // 检查特定的错误代码
+        if (errno == EINVAL) {
+            qDebug() << "错误: 设备不支持内存映射";
+        } else if (errno == EBUSY) {
+            qDebug() << "错误: 设备忙或已被其他进程打开";
+        }
+    } else {
+        qDebug() << "成功请求到 " << req.count << " 个缓冲区";
+
+        // 释放刚刚分配的缓冲区
+        req.count = 0;
+        ioctl(m_fd, VIDIOC_REQBUFS, &req);
+    }
+
+    qDebug() << "摄像头诊断完成";
+}
+
+QList<QSize> WebcamDevice::getSupportedResolutions()
+{
+    if (m_supportedResolutions.isEmpty() && m_fd > 0) {
+        enumerateSupportedResolutions();
+    }
+
+    // 添加调试信息
+    qDebug() << "获取支持的分辨率数量:" << m_supportedResolutions.size();
+    for (const QSize &res : m_supportedResolutions) {
+        qDebug() << "  支持的分辨率:" << res.width() << "x" << res.height();
+    }
+
+    return m_supportedResolutions;
+}
+
+void WebcamDevice::enumerateSupportedResolutions()
+{
+    // 清空分辨率列表，确保每次重新获取
+    m_supportedResolutions.clear();
+
+    if (m_fd <= 0) {
+        qDebug() << "设备未打开，无法获取支持的分辨率";
+        return;
+    }
+
+    // 检查是否支持VIDIOC_ENUM_FRAMESIZES
+    v4l2_frmsizeenum frmsize;
+    memset(&frmsize, 0, sizeof(frmsize));
+    frmsize.pixel_format = m_pixelFormat;
+
+    qDebug() << "枚举设备支持的分辨率:";
+
+    // 标记是否找到任何分辨率
+    bool foundAnyResolution = false;
+
+    for (frmsize.index = 0; ioctl(m_fd, VIDIOC_ENUM_FRAMESIZES, &frmsize) == 0; frmsize.index++) {
+        foundAnyResolution = true;
+        if (frmsize.type == V4L2_FRMSIZE_TYPE_DISCRETE) {
+            QSize resolution(frmsize.discrete.width, frmsize.discrete.height);
+            // 检查重复，避免添加相同的分辨率
+            if (!m_supportedResolutions.contains(resolution)) {
+                m_supportedResolutions.append(resolution);
+                qDebug() << "  发现离散分辨率:" << resolution.width() << "x" << resolution.height();
+            }
+        } else if (frmsize.type == V4L2_FRMSIZE_TYPE_STEPWISE || frmsize.type == V4L2_FRMSIZE_TYPE_CONTINUOUS) {
+            // 对于可变范围分辨率，添加几个标准尺寸
+            qDebug() << "  支持范围:" << frmsize.stepwise.min_width << "x" << frmsize.stepwise.min_height
+                     << " 到 " << frmsize.stepwise.max_width << "x" << frmsize.stepwise.max_height;
+
+            // 生成一些标准分辨率在支持范围内
+            QList<QSize> standardResolutions;
+            standardResolutions << QSize(640, 480) << QSize(800, 600)
+                                << QSize(1024, 768) << QSize(1280, 720)
+                                << QSize(1920, 1080) << QSize(2560, 1440)
+                                << QSize(3840, 2160);
+
+            for (const QSize &res : standardResolutions) {
+                if (res.width() >= frmsize.stepwise.min_width && res.width() <= frmsize.stepwise.max_width && res.height() >= frmsize.stepwise.min_height && res.height() <= frmsize.stepwise.max_height) {
+                    // 检查重复，避免添加相同的分辨率
+                    if (!m_supportedResolutions.contains(res)) {
+                        m_supportedResolutions.append(res);
+                        qDebug() << "  添加标准分辨率:" << res.width() << "x" << res.height();
+                    }
+                }
+            }
+
+            // 找到了步进范围后退出循环
+            break;
+        }
+    }
+
+    // 如果无法枚举分辨率，至少添加一些常见的分辨率
+    if (!foundAnyResolution || m_supportedResolutions.isEmpty()) {
+        qDebug() << "无法枚举分辨率或未找到分辨率，添加常见分辨率";
+        // 确保不添加重复的分辨率
+        if (!m_supportedResolutions.contains(QSize(640, 480)))
+            m_supportedResolutions << QSize(640, 480);
+        if (!m_supportedResolutions.contains(QSize(800, 600)))
+            m_supportedResolutions << QSize(800, 600);
+        if (!m_supportedResolutions.contains(QSize(1280, 720)))
+            m_supportedResolutions << QSize(1280, 720);
+        if (!m_supportedResolutions.contains(QSize(1920, 1080)))
+            m_supportedResolutions << QSize(1920, 1080);
+    }
+
+    // 排序分辨率从小到大
+    std::sort(m_supportedResolutions.begin(), m_supportedResolutions.end(),
+              [](const QSize &a, const QSize &b) {
+                  return a.width() * a.height() < b.width() * b.height();
+              });
+
+    qDebug() << "最终枚举到的分辨率数量:" << m_supportedResolutions.size();
+
+    // 发出信号通知分辨率列表已更新
+    emit resolutionsChanged(m_supportedResolutions);
+}
+
+bool WebcamDevice::setCameraControl(uint32_t controlId, int value)
+{
+    if (m_fd <= 0) {
+        qDebug() << "文件描述符无效，无法设置控制参数";
+        return false;
+    }
+
+    // 先查询控制项是否存在及其范围
+    struct v4l2_queryctrl queryctrl;
+    memset(&queryctrl, 0, sizeof(queryctrl));
+    queryctrl.id = controlId;
+
+    if (ioctl(m_fd, VIDIOC_QUERYCTRL, &queryctrl) == -1) {
+        if (errno == EINVAL) {
+            qDebug() << "摄像头不支持此控制项:" << controlId;
+        } else {
+            qDebug() << "查询控制项失败:" << strerror(errno);
+        }
+        return false;
+    }
+
+    if (queryctrl.flags & V4L2_CTRL_FLAG_DISABLED) {
+        qDebug() << "控制项被禁用:" << queryctrl.name;
+        return false;
+    }
+
+    // 确保值在有效范围内
+    if (value < queryctrl.minimum) value = queryctrl.minimum;
+    if (value > queryctrl.maximum) value = queryctrl.maximum;
+
+    // 设置控制项的值
+    struct v4l2_control control;
+    control.id = controlId;
+    control.value = value;
+
+    if (ioctl(m_fd, VIDIOC_S_CTRL, &control) == -1) {
+        qDebug() << "设置控制项失败:" << queryctrl.name << "值:" << value << "错误:" << strerror(errno);
+        return false;
+    }
+
+    qDebug() << "成功设置控制项:" << queryctrl.name << "值:" << value;
+    return true;
+}
+
+void WebcamDevice::listCameraControls()
+{
+    if (m_fd <= 0) {
+        qDebug() << "文件描述符无效，无法列出控制参数";
+        return;
+    }
+
+    qDebug() << "摄像头支持的控制参数:";
+
+    // 标准控制项
+    struct v4l2_queryctrl queryctrl;
+    for (uint32_t id = V4L2_CID_BASE; id < V4L2_CID_LASTP1; id++) {
+        memset(&queryctrl, 0, sizeof(queryctrl));
+        queryctrl.id = id;
+
+        if (ioctl(m_fd, VIDIOC_QUERYCTRL, &queryctrl) == 0) {
+            if (!(queryctrl.flags & V4L2_CTRL_FLAG_DISABLED)) {
+                struct v4l2_control control;
+                control.id = id;
+                if (ioctl(m_fd, VIDIOC_G_CTRL, &control) == 0) {
+                    qDebug() << "  控制项:" << queryctrl.name
+                             << "ID:" << queryctrl.id
+                             << "当前值:" << control.value
+                             << "范围:" << queryctrl.minimum << "-" << queryctrl.maximum
+                             << "默认值:" << queryctrl.default_value;
+                } else {
+                    qDebug() << "  控制项:" << queryctrl.name
+                             << "ID:" << queryctrl.id
+                             << "范围:" << queryctrl.minimum << "-" << queryctrl.maximum
+                             << "默认值:" << queryctrl.default_value
+                             << "(无法获取当前值)";
+                }
+            }
+        }
+    }
+
+    // 相机类控制项
+    for (uint32_t id = V4L2_CID_CAMERA_CLASS_BASE; id < V4L2_CID_CAMERA_CLASS_BASE + 100; id++) {
+        memset(&queryctrl, 0, sizeof(queryctrl));
+        queryctrl.id = id;
+
+        if (ioctl(m_fd, VIDIOC_QUERYCTRL, &queryctrl) == 0) {
+            if (!(queryctrl.flags & V4L2_CTRL_FLAG_DISABLED)) {
+                struct v4l2_control control;
+                control.id = id;
+                if (ioctl(m_fd, VIDIOC_G_CTRL, &control) == 0) {
+                    qDebug() << "  相机控制项:" << queryctrl.name
+                             << "ID:" << queryctrl.id
+                             << "当前值:" << control.value
+                             << "范围:" << queryctrl.minimum << "-" << queryctrl.maximum
+                             << "默认值:" << queryctrl.default_value;
+                } else {
+                    qDebug() << "  相机控制项:" << queryctrl.name
+                             << "ID:" << queryctrl.id
+                             << "范围:" << queryctrl.minimum << "-" << queryctrl.maximum
+                             << "默认值:" << queryctrl.default_value
+                             << "(无法获取当前值)";
+                }
+            }
+        }
+    }
+
+    // 私有控制项
+    for (uint32_t id = V4L2_CID_PRIVATE_BASE; id < V4L2_CID_PRIVATE_BASE + 100; id++) {
+        memset(&queryctrl, 0, sizeof(queryctrl));
+        queryctrl.id = id;
+
+        if (ioctl(m_fd, VIDIOC_QUERYCTRL, &queryctrl) == 0) {
+            if (!(queryctrl.flags & V4L2_CTRL_FLAG_DISABLED)) {
+                struct v4l2_control control;
+                control.id = id;
+                if (ioctl(m_fd, VIDIOC_G_CTRL, &control) == 0) {
+                    qDebug() << "  私有控制项:" << queryctrl.name
+                             << "ID:" << queryctrl.id
+                             << "当前值:" << control.value
+                             << "范围:" << queryctrl.minimum << "-" << queryctrl.maximum
+                             << "默认值:" << queryctrl.default_value;
+                } else {
+                    qDebug() << "  私有控制项:" << queryctrl.name
+                             << "ID:" << queryctrl.id
+                             << "范围:" << queryctrl.minimum << "-" << queryctrl.maximum
+                             << "默认值:" << queryctrl.default_value
+                             << "(无法获取当前值)";
+                }
+            }
+        }
+    }
+}
+
+// 调整摄像头常见参数
+bool WebcamDevice::adjustCommonCameraSettings()
+{
+    if (m_fd <= 0) {
+        qDebug() << "文件描述符无效，无法调整摄像头参数";
+        return false;
+    }
+
+    // 首先列出所有可用的控制项，帮助调试
+    listCameraControls();
+
+    // 常见的参数ID及它们的推荐值 - 降低默认值以解决图像过亮问题
+    const struct
+    {
+        uint32_t id;
+        int value;   // -1 表示设置为默认值
+        const char *name;
+    } commonControls[] = {
+        { V4L2_CID_BRIGHTNESS, 50, "亮度" },   // 亮度，显著降低以减少过亮
+        { V4L2_CID_CONTRAST, 80, "对比度" },   // 增加对比度
+        { V4L2_CID_SATURATION, 80, "饱和度" },   // 轻微降低饱和度
+        { V4L2_CID_HUE, -1, "色调" },   // 色调，使用默认值
+        { V4L2_CID_AUTO_WHITE_BALANCE, 1, "自动白平衡" },   // 自动白平衡，启用
+        { V4L2_CID_GAMMA, 77, "伽玛" },   // 调整伽玛值
+        { V4L2_CID_GAIN, 40, "增益" },   // 大幅降低增益以减少过亮
+        { V4L2_CID_EXPOSURE, 150, "曝光" },   // 大幅降低曝光以减少过亮
+        { V4L2_CID_EXPOSURE_AUTO, V4L2_EXPOSURE_MANUAL, "自动曝光" },   // 关闭自动曝光，使用手动设置
+        { V4L2_CID_EXPOSURE_AUTO_PRIORITY, 0, "自动曝光优先级" }   // 自动曝光优先级，禁用以避免帧率下降
+    };
+
+    // 尝试禁用自动控制，让我们的手动设置生效
+    v4l2_control auto_ctrl;
+    auto_ctrl.id = V4L2_CID_EXPOSURE_AUTO;
+    auto_ctrl.value = V4L2_EXPOSURE_MANUAL;
+    ioctl(m_fd, VIDIOC_S_CTRL, &auto_ctrl);
+
+    // 先禁用自动增益
+    v4l2_control gain_ctrl;
+    gain_ctrl.id = V4L2_CID_AUTOGAIN;
+    gain_ctrl.value = 0;   // 0表示禁用自动增益
+    ioctl(m_fd, VIDIOC_S_CTRL, &gain_ctrl);
+
+    bool anySuccess = false;
+
+    // 尝试设置每个控制项
+    for (const auto &control : commonControls) {
+        qDebug() << "尝试设置控制项:" << control.name << "为" << control.value;
+        // 查询控制项是否存在及其范围
+        struct v4l2_queryctrl queryctrl;
+        memset(&queryctrl, 0, sizeof(queryctrl));
+        queryctrl.id = control.id;
+
+        if (ioctl(m_fd, VIDIOC_QUERYCTRL, &queryctrl) == -1) {
+            // 控制项不存在，跳过
+            qDebug() << "  控制项不存在:" << control.name;
+            continue;
+        }
+
+        if (queryctrl.flags & V4L2_CTRL_FLAG_DISABLED) {
+            // 控制项被禁用，跳过
+            qDebug() << "  控制项被禁用:" << control.name;
+            continue;
+        }
+
+        // 设置控制项的值
+        int valueToSet = control.value;
+        if (valueToSet == -1) {
+            // 使用默认值
+            valueToSet = queryctrl.default_value;
+        } else {
+            // 确保值在有效范围内
+            if (valueToSet < queryctrl.minimum) valueToSet = queryctrl.minimum;
+            if (valueToSet > queryctrl.maximum) valueToSet = queryctrl.maximum;
+        }
+
+        struct v4l2_control ctrl;
+        ctrl.id = control.id;
+        ctrl.value = valueToSet;
+
+        // 重试几次，有些摄像头可能需要多次尝试
+        bool controlSet = false;
+        for (int retry = 0; retry < 3 && !controlSet; retry++) {
+            if (ioctl(m_fd, VIDIOC_S_CTRL, &ctrl) == 0) {
+                qDebug() << "  成功设置" << control.name << "为" << valueToSet;
+                anySuccess = true;
+                controlSet = true;
+            } else {
+                qDebug() << "  设置" << control.name << "失败:" << strerror(errno) << "尝试次数:" << retry + 1;
+                // 短暂等待后重试
+                QThread::msleep(50);
+            }
+        }
+    }
+
+    return anySuccess;
+}
+
+// Implementation of camera control shortcut methods
+bool WebcamDevice::setCameraBrightness(int value)
+{
+    return setCameraControl(V4L2_CID_BRIGHTNESS, value);
+}
+
+bool WebcamDevice::setCameraContrast(int value)
+{
+    return setCameraControl(V4L2_CID_CONTRAST, value);
+}
+
+bool WebcamDevice::setCameraExposure(int value)
+{
+    return setCameraControl(V4L2_CID_EXPOSURE, value);
+}
+
+bool WebcamDevice::setCameraAutoExposure(bool enable)
+{
+    return setCameraControl(V4L2_CID_EXPOSURE_AUTO, enable ? V4L2_EXPOSURE_AUTO : V4L2_EXPOSURE_MANUAL);
+}
+
+bool WebcamDevice::initMmap()
+{
+    // 首先检查设备是否打开
+    if (m_fd == -1) {
+        qDebug() << "设备未打开，无法初始化内存映射";
+        return false;
+    }
+
+    // 确保之前的映射已清理
+    uninitMmap();
+
+    // 停止任何可能正在运行的流
+    v4l2_buf_type type = V4L2_BUF_TYPE_VIDEO_CAPTURE;
+    ioctl(m_fd, VIDIOC_STREAMOFF, &type);
+
+    // 释放已经存在的任何缓冲区
+    v4l2_requestbuffers release_req = {};
+    release_req.count = 0;   // 请求0个缓冲区会释放所有现有缓冲区
+    release_req.type = V4L2_BUF_TYPE_VIDEO_CAPTURE;
+    release_req.memory = V4L2_MEMORY_MMAP;
+    int release_result = ioctl(m_fd, VIDIOC_REQBUFS, &release_req);
+    if (release_result == -1) {
+        qDebug() << "释放已有缓冲区失败:" << strerror(errno);
+    }
+
+    // 给设备一些恢复时间
+    QThread::msleep(200);
+
+    // 初始化缓冲区数组
+    for (int i = 0; i < 4; i++) {
+        m_buffers[i] = nullptr;
+        m_bufferSizes[i] = 0;
+    }
+
+    // 请求缓冲区 - 只使用1个缓冲区以降低复杂度
+    v4l2_requestbuffers req = {};
+    req.count = 1;   // 使用1个缓冲区，简化操作
+    req.type = V4L2_BUF_TYPE_VIDEO_CAPTURE;
+    req.memory = V4L2_MEMORY_MMAP;
+
+    if (ioctl(m_fd, VIDIOC_REQBUFS, &req) == -1) {
+        qDebug() << "请求缓冲区失败:" << strerror(errno);
+        return false;
+    }
+
+    if (req.count < 1) {
+        qDebug() << "设备返回的缓冲区数量不足:" << req.count;
+        return false;
+    }
+
+    qDebug() << "成功请求到" << req.count << "个缓冲区";
+
+    // 记录实际分配的缓冲区数量
+    int bufferCount = req.count;
+    if (bufferCount > 4) bufferCount = 4;
+
+    // 映射缓冲区
+    bool success = true;
+    for (int i = 0; i < bufferCount; i++) {
+        struct v4l2_buffer buf;
+        memset(&buf, 0, sizeof(buf));
+        buf.type = V4L2_BUF_TYPE_VIDEO_CAPTURE;
+        buf.memory = V4L2_MEMORY_MMAP;
+        buf.index = i;
+
+        if (ioctl(m_fd, VIDIOC_QUERYBUF, &buf) == -1) {
+            qDebug() << "查询缓冲区" << i << "失败:" << strerror(errno);
+            success = false;
+            break;
+        }
+
+        qDebug() << "缓冲区" << i << "信息: 偏移量=" << buf.m.offset
+                 << " 长度=" << buf.length;
+
+        void *ptr = mmap(nullptr, buf.length, PROT_READ | PROT_WRITE,
+                         MAP_SHARED, m_fd, buf.m.offset);
+
+        if (ptr == MAP_FAILED) {
+            qDebug() << "映射缓冲区" << i << "失败:" << strerror(errno);
+            success = false;
+            break;
+        }
+
+        m_buffers[i] = ptr;
+        m_bufferSizes[i] = buf.length;
+
+        qDebug() << "成功映射缓冲区" << i << "大小:" << buf.length << "字节, 地址:" << ptr;
+    }
+
+    // 如果任何映射失败，清理所有已映射的缓冲区
+    if (!success) {
+        uninitMmap();
+        return false;
+    }
+
+    return true;
+}
+
+void WebcamDevice::uninitMmap()
+{
+    for (int i = 0; i < 4; ++i) {
+        if (m_buffers[i]) {
+            munmap(m_buffers[i], m_bufferSizes[i]);
+            m_buffers[i] = nullptr;
+            m_bufferSizes[i] = 0;
+        }
+    }
 }
