@@ -9,6 +9,7 @@
 #include <QMutex>
 #include <QThread>
 #include <QDebug>
+#include "devicebase.h"
 
 // 自定义预览窗口类
 class PreviewWidget : public QWidget
@@ -25,29 +26,35 @@ private:
     QImage m_currentFrame;
 };
 
-class WebcamDevice : public QObject
+class WebcamDevice : public DeviceBase
 {
     Q_OBJECT
 
 public:
     explicit WebcamDevice(QObject *parent = nullptr);
-    ~WebcamDevice();
+    ~WebcamDevice() override;
 
-    QStringList getAvailableDevices();
-    bool openDevice(const QString &devicePath);
-    void closeDevice();
+    // DeviceBase interface implementation
+    bool initialize() override;
+    QStringList getAvailableDevices() override;
+    bool openDevice(const QString &devicePath) override;
+    void closeDevice() override;
+    void startCapture() override { startPreview(); }
+    void stopCapture() override { stopPreview(); }
+    bool isCapturing() const override { return m_previewTimer.isActive(); }
+    DeviceType getDeviceType() const override { return DeviceType::Webcam; }
+    QString currentDeviceName() const override { return m_currentDeviceName; }
+
+    // Extended webcam-specific interface
     void startPreview();
     void stopPreview();
     void captureImage();
     QWidget *getVideoWidget();
     QSize getMaxResolution();
-
-    // 将setResolution移到public部分
     bool setResolution(int width, int height);
-
-    // 新增方法
     QList<QSize> getSupportedResolutions();
     QSize getCurrentResolution() const { return QSize(m_width, m_height); }
+    QImage getLatestFrame();
 
     // 添加分辨率到支持列表
     void addSupportedResolution(const QSize &resolution)

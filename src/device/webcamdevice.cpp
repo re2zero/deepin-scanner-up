@@ -54,7 +54,7 @@ void PreviewWidget::paintEvent(QPaintEvent *event)
 
 // WebcamDevice 实现
 WebcamDevice::WebcamDevice(QObject *parent)
-    : QObject(parent), m_fd(-1), m_currentBuffer(0), m_isInitialized(false), m_deviceSelected(false), m_previewWidget(new PreviewWidget), m_width(640), m_height(480), m_pixelFormat(V4L2_PIX_FMT_YUYV)
+    : DeviceBase(parent), m_fd(-1), m_currentBuffer(0), m_isInitialized(false), m_deviceSelected(false), m_previewWidget(new PreviewWidget), m_width(640), m_height(480), m_pixelFormat(V4L2_PIX_FMT_YUYV)
 {
     memset(m_buffers, 0, sizeof(m_buffers));
     memset(m_bufferSizes, 0, sizeof(m_bufferSizes));
@@ -107,6 +107,13 @@ QStringList WebcamDevice::getAvailableDevices()
         }
     }
     return devices;
+}
+
+bool WebcamDevice::initialize()
+{
+    // Webcam设备不需要特殊的初始化，直接返回成功
+    setState(Initialized);
+    return true;
 }
 
 bool WebcamDevice::openDevice(const QString &devicePath)
@@ -191,6 +198,8 @@ bool WebcamDevice::openDevice(const QString &devicePath)
 
     m_isInitialized = true;
     m_deviceSelected = true;
+    m_currentDeviceName = devicePath;
+    setState(Connected);
 
     // 尝试设置摄像头参数
     setCameraAutoExposure(false);
@@ -474,6 +483,7 @@ void WebcamDevice::startPreview()
 
     qDebug() << "预览开始，已应用相机参数";
     m_previewTimer.start();
+    setState(Capturing);
 }
 
 void WebcamDevice::stopPreview()
@@ -482,6 +492,7 @@ void WebcamDevice::stopPreview()
     if (m_isInitialized) {
         stopCapturing();
     }
+    setState(Connected);
 }
 
 void WebcamDevice::updatePreview()
@@ -668,7 +679,7 @@ QImage WebcamDevice::frameToQImage(const void *data, int width, int height, int 
         return QImage();
     }
 
-    qDebug() << "转换帧数据:" << width << "x" << height << "格式:" << format;
+    // qDebug() << "转换帧数据:" << width << "x" << height << "格式:" << format;
 
     if (format == V4L2_PIX_FMT_YUYV) {
         QImage image(width, height, QImage::Format_RGB888);
@@ -747,7 +758,7 @@ QImage WebcamDevice::frameToQImage(const void *data, int width, int height, int 
         size_t actualSize = 0;
         if (ioctl(m_fd, VIDIOC_QUERYBUF, &buf) != -1) {
             actualSize = buf.bytesused;
-            qDebug() << "MJPEG实际数据大小:" << actualSize;
+            // qDebug() << "MJPEG实际数据大小:" << actualSize;
         } else {
             actualSize = width * height;
             qDebug() << "使用估计大小:" << actualSize;
@@ -788,6 +799,7 @@ void WebcamDevice::closeDevice()
 
     m_deviceSelected = false;
     m_isInitialized = false;
+    setState(Disconnected);
 }
 
 // 新增方法：获取摄像头支持的最大分辨率
@@ -1518,4 +1530,10 @@ void WebcamDevice::uninitMmap()
             m_bufferSizes[i] = 0;
         }
     }
+}
+
+QImage WebcamDevice::getLatestFrame()
+{
+    QMutexLocker locker(&m_frameMutex);
+    return m_latestFrame.copy();
 }

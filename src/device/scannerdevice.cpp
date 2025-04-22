@@ -7,6 +7,7 @@
 #include <QPainter>
 #include <QDateTime>
 #include <QThread>
+#include <QStandardPaths>
 
 // --- Dummy definitions for Image/advance if not available elsewhere ---
 // Replace these with your actual definitions if they exist elsewhere
@@ -62,7 +63,7 @@ static void write_png_header(SANE_Frame format, int width, int height, int depth
 // --- End Dummy definitions ---
 
 ScannerDevice::ScannerDevice(QObject *parent)
-    : QObject(parent)
+    : DeviceBase(parent)
 {
 #ifdef _WIN32
     qWarning() << "SANE scanning is not supported on Windows in this build.";
@@ -80,7 +81,7 @@ ScannerDevice::~ScannerDevice()
 #endif
 }
 
-bool ScannerDevice::initializeSane()
+bool ScannerDevice::initialize()
 {
 #ifndef _WIN32
     if (m_saneInitialized) {
@@ -96,6 +97,7 @@ bool ScannerDevice::initializeSane()
         return false;
     }
     m_saneInitialized = true;
+    setState(Initialized);
     qDebug() << "SANE initialized successfully. Version code:" << version_code;
     return true;
 #else
@@ -126,7 +128,7 @@ QStringList ScannerDevice::getAvailableDevices()
 
     // 检查USB设备连接
     QProcess lsusbProcess;
-    lsusbProcess.start("lsusb");
+    lsusbProcess.start("lsusb", QStringList());
     lsusbProcess.waitForFinished(5000);
     QString lsusbOutput = QString::fromUtf8(lsusbProcess.readAllStandardOutput());
     qDebug() << "Connected USB devices:";
@@ -165,7 +167,7 @@ QStringList ScannerDevice::getAvailableDevices()
 
     // 尝试手动运行scanimage命令 - 有些系统中SANE库与scanimage使用不同的配置
     QProcess process;
-    process.start("scanimage", QStringList() << "-L");
+    process.start("scanimage", QStringList("-L"));
     process.waitForFinished(5000);
     QString output = QString::fromUtf8(process.readAllStandardOutput());
     QString error = QString::fromUtf8(process.readAllStandardError());
@@ -265,7 +267,8 @@ QStringList ScannerDevice::getAvailableDevices()
     if (deviceNames.isEmpty()) {
         qDebug() << "No SANE devices found, adding a virtual test device";
         deviceNames.append("test:0");
-        
+
+#ifdef ENABLE_POPUPS
         // 建议一些可能的解决方法
         emit scanError(tr("未找到扫描设备。以下操作可能有帮助:\n"
                         "1. 确保扫描仪已连接并开机\n"
@@ -274,6 +277,8 @@ QStringList ScannerDevice::getAvailableDevices()
                         "4. 安装所需的驱动包: sudo apt-get install libsane-extras\n"
                         "5. 如果是网络扫描仪，检查网络配置\n"
                         "6. 重新插拔USB连接或重启电脑"));
+#endif
+        
     }
 
 #else
@@ -333,6 +338,8 @@ bool ScannerDevice::openDevice(const QString &deviceName)
     }
 
     m_deviceOpen = true;
+    m_currentDeviceName = deviceName;
+    setState(Connected);
     qDebug() << "Device" << deviceName << "opened successfully.";
     return true;
 
@@ -359,7 +366,25 @@ void ScannerDevice::closeDevice()
     }
     m_device = nullptr;
     m_deviceOpen = false;
+    setState(Disconnected);
 #endif
+}
+
+void ScannerDevice::startCapture()
+{
+    QString tempPath = QStandardPaths::writableLocation(QStandardPaths::TempLocation) + "/scan_temp.png";
+    startScan(tempPath);
+}
+
+void ScannerDevice::stopCapture()
+{
+    cancelScan();
+    setState(Connected);
+}
+
+bool ScannerDevice::isCapturing() const
+{
+    return state() == Capturing;
 }
 
 void ScannerDevice::startScan(const QString &tempOutputFilePath)
@@ -367,6 +392,7 @@ void ScannerDevice::startScan(const QString &tempOutputFilePath)
 #ifndef _WIN32
     // 如果是测试设备，生成测试图像
     if (m_usingTestDevice) {
+        setState(Capturing);
         generateTestImage(tempOutputFilePath);
         return;
     }
@@ -375,6 +401,8 @@ void ScannerDevice::startScan(const QString &tempOutputFilePath)
         emit scanError(tr("扫描仪未打开"));
         return;
     }
+    
+    setState(Capturing);
 
     // 获取扫描仪参数
     SANE_Parameters params;
@@ -894,4 +922,59 @@ void ScannerDevice::generateTestImage(const QString &outputPath)
     } else {
         emit scanError(tr("无法保存测试图像"));
     }
+}
+
+/**
+ * @brief Set the scanner resolution in DPI
+ * @param dpi The resolution in dots per inch
+ * @return true if successful, false otherwise
+ */
+bool ScannerDevice::setResolution(int dpi)
+{
+#ifndef _WIN32
+    if (!m_deviceOpen || !m_device) {
+        qWarning() << "Cannot set resolution - device not open";
+        return false;
+    }
+
+    // Find the resolution option
+    SANE_Int option_count = 0;
+    const SANE_Option_Descriptor *option_desc = nullptr;
+    SANE_Status status = sane_control_option(m_device, 0, SANE_ACTION_GET_VALUE, &option_count, nullptr);
+    if (status != SANE_STATUS_GOOD) {
+        qWarning() << "Failed to get option count:" << sane_strstatus(status);
+        return false;
+    }
+
+    // Search for resolution option
+    int resolution_option = -1;
+    for (SANE_Int i = 0; i < option_count; ++i) {
+        option_desc = sane_get_option_descriptor(m_device, i);
+        if (option_desc && option_desc->name && 
+            (strcmp(option_desc->name, "resolution") == 0 || 
+             strcmp(option_desc->name, "x-resolution") == 0)) {
+            resolution_option = i;
+            break;
+        }
+    }
+
+    if (resolution_option == -1) {
+        qWarning() << "Resolution option not found on this device";
+        return false;
+    }
+
+    // Set the resolution value
+    SANE_Word resolution_value = static_cast<SANE_Word>(dpi);
+    status = sane_control_option(m_device, resolution_option, SANE_ACTION_SET_VALUE, &resolution_value, nullptr);
+    if (status != SANE_STATUS_GOOD) {
+        qWarning() << "Failed to set resolution:" << sane_strstatus(status);
+        return false;
+    }
+
+    qDebug() << "Successfully set scanner resolution to" << dpi << "DPI";
+    return true;
+#else
+    qWarning() << "Setting resolution not supported on Windows";
+    return false;
+#endif
 }

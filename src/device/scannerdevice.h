@@ -5,6 +5,7 @@
 #include <QString>
 #include <QStringList>
 #include <QImage>
+#include "devicebase.h"
 
 // Only include and use SANE on non-Windows platforms
 #ifndef _WIN32 // Or use Q_OS_WIN if preferred
@@ -16,7 +17,7 @@
 // Forward declaration for Image struct if needed within scan_it
 struct Image;
 
-class ScannerDevice : public QObject
+class ScannerDevice : public DeviceBase
 {
     Q_OBJECT
 
@@ -32,32 +33,27 @@ public:
     };
 
     explicit ScannerDevice(QObject *parent = nullptr);
-    ~ScannerDevice();
+    ~ScannerDevice() override;
+
+    // DeviceBase interface implementation
+    bool initialize() override;
+    QStringList getAvailableDevices() override;
+    bool openDevice(const QString &deviceName) override;
+    void closeDevice() override;
+    void startCapture() override;
+    void stopCapture() override;
+    bool isCapturing() const override;
+    DeviceType getDeviceType() const override { return DeviceType::Scanner; }
+    QString currentDeviceName() const override { return m_currentDeviceName; }
+
+    // Extended scanner-specific interface
+    void startScan(const QString &tempOutputFilePath);
+    void cancelScan();
+    bool advance(Image *im);
+    bool setResolution(int dpi);
 
     // Initializes the SANE backend. Returns true on success.
-    bool initializeSane();
-
-    // Returns a list of detected SANE device names.
-    QStringList getAvailableDevices();
-
-    // Opens the specified device. Returns true if successful.
-    // Note: Blocking operation. Consider async or thread later.
-    bool openDevice(const QString &deviceName);
-
-    // Closes the currently open device.
-    void closeDevice();
-
-    // Starts the scanning process.
-    // The image will be saved temporarily and then emitted via signal.
-    // Note: This is currently blocking. Consider thread later.
-    void startScan(const QString &tempOutputFilePath);
-
-    // Attempts to cancel an ongoing scan (if supported by backend/device).
-    void cancelScan();
-
-    // Helper function (if needed publicly, otherwise move to private/protected)
-    // Ensure the signature matches the cpp definition (should return bool)
-    bool advance(Image *im); // Example signature, adjust as needed
+    bool initializeSane() { return initialize(); }
 
 signals:
     // Emitted when the scan successfully completes.
@@ -88,4 +84,4 @@ private:
     void generateTestImage(const QString &outputPath);
 };
 
-#endif // SCANNERDEVICE_H 
+#endif // SCANNERDEVICE_H

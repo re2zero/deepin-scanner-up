@@ -8,8 +8,8 @@
 #include <QComboBox>
 #include <QListWidget>
 #include <QLabel>
-#include "scannerdevice.h"
-#include "webcamdevice.h"
+#include "device/scannerdevice.h"
+#include "device/webcamdevice.h"
 
 DWIDGET_USE_NAMESPACE
 

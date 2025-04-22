@@ -1,6 +1,4 @@
 #include "scanwindow.h"
-#include "scannerdevice.h"
-#include "webcamdevice.h"
 #include <DTitlebar>
 #include <DWidgetUtil>
 #include <QVBoxLayout>

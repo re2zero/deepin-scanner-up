@@ -47,7 +47,9 @@ endif()
 
 # 查找Qt和DTK
 find_package(Qt${QT_DESIRED_VERSION} REQUIRED COMPONENTS ${qt_required_components})
+# 查找DTK并添加包含路径
 find_package(Dtk${DTK_VERSION_MAJOR} REQUIRED COMPONENTS Widget Gui Core)
+include_directories(${Dtk${DTK_VERSION_MAJOR}_INCLUDE_DIRS})
 
 # 定义链接库
 set(LINK_LIBS
@@ -82,6 +84,7 @@ add_compile_options(
 
 # 添加子项目
 add_subdirectory(src)
+# add_subdirectory(tests)
 
 # translation files
 TRANSLATION_GENERATE(QM_FILES ${CMAKE_SOURCE_DIR}/translations)
