@@ -12,6 +12,8 @@
 #include <QScreen>  // Added for QProcess
 #include <QGraphicsDropShadowEffect>  // Added for shadow effect
 
+#include <DTitlebar>
+
 MainWindow::MainWindow(QWidget *parent)
     : DMainWindow(parent)
     //, ui(new Ui::MainWindow) // 如果使用 .ui 文件
@@ -60,19 +62,26 @@ MainWindow::MainWindow(QWidget *parent)
     connect(m_scannersWidget, &ScannersWidget::updateDeviceListRequested,
             this, [this](){ updateDeviceList(); });
                        
-    // // 连接设备信号
-    // auto scanner = m_devices["scanner"].dynamicCast<ScannerDevice>();
-    // auto webcam = m_devices["webcam"].dynamicCast<WebcamDevice>();
 
-    // 存储设备指针
-    m_devices["scanner"] = scannerDevice;
-    m_devices["webcam"] = webcamDevice;
+    // 设置标题栏logo
+    auto titleBar = titlebar();
+    // titleBar->setIcon(QIcon(":/resources/logo.svg"));
+    titleBar->setIcon(QIcon::fromTheme("deepin-scanner"));
 
+    m_backBtn = new DIconButton();
+    m_backBtn->setIcon(QIcon::fromTheme("go-previous"));
+    m_backBtn->setVisible(false); // 初始隐藏
+    titleBar->addWidget(m_backBtn, Qt::AlignLeft);
+    
     // 延迟初始化设备列表，确保设备完全初始化
     QTimer::singleShot(300, this, [this](){
         qDebug() << "Initializing device list...";
         updateDeviceList();
     });
+    
+    // 连接返回按钮信号
+    connect(m_backBtn, &DIconButton::clicked,
+            this, &MainWindow::showDeviceListView);
 }
 
 MainWindow::~MainWindow()
@@ -127,10 +136,13 @@ void MainWindow::showScanView(const QString &device, bool isScanner)
     
     // 切换到扫描界面
     m_stackLayout->setCurrentWidget(m_scanWidget);
+
+    m_backBtn->setVisible(true); // 隐藏
 }
 
 void MainWindow::showDeviceListView()
 {
+    m_backBtn->setVisible(false); // 隐藏
     // 切换到设备列表界面
     m_stackLayout->setCurrentWidget(m_scannersWidget);
 }

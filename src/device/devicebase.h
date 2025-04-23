@@ -48,7 +48,6 @@ signals:
     void deviceOpened(bool success);
     void deviceClosed();
     void captureStarted();
-    void captureStopped();
     void imageCaptured(const QImage &image);
     void errorOccurred(const QString &error);
 

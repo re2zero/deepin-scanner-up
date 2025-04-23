@@ -56,11 +56,11 @@ public:
     bool initializeSane() { return initialize(); }
 
 signals:
-    // Emitted when the scan successfully completes.
-    void scanCompleted(const QImage &scannedImage);
+    // // Emitted when the scan successfully completes.
+    // void scanCompleted(const QImage &scannedImage);
 
-    // Emitted if an error occurs during initialization, opening, or scanning.
-    void scanError(const QString &errorMessage);
+    // // Emitted if an error occurs during initialization, opening, or scanning.
+    // void errorOccurred(const QString &errorMessage);
 
     // Emitted periodically during scanning to report progress (0-100).
     // Note: Requires modification in scan_it to emit this.

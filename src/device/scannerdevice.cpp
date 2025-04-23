@@ -93,7 +93,7 @@ bool ScannerDevice::initialize()
     if (status != SANE_STATUS_GOOD) {
         QString errorMsg = QString("Failed to initialize SANE: %1").arg(sane_strstatus(status));
         qWarning() << errorMsg;
-        emit scanError(errorMsg);
+        emit errorOccurred(errorMsg);
         return false;
     }
     m_saneInitialized = true;
@@ -101,7 +101,7 @@ bool ScannerDevice::initialize()
     qDebug() << "SANE initialized successfully. Version code:" << version_code;
     return true;
 #else
-    emit scanError("SANE backend not available on this platform.");
+    emit errorOccurred("SANE backend not available on this platform.");
     return false;
 #endif
 }
@@ -206,7 +206,7 @@ QStringList ScannerDevice::getAvailableDevices()
     if (status != SANE_STATUS_GOOD) {
         QString errorMsg = QString("Failed to get SANE device list: %1").arg(sane_strstatus(status));
         qWarning() << errorMsg;
-        emit scanError(errorMsg);
+        emit errorOccurred(errorMsg);
         
         // 如果特定后端没有安装，尝试提供建议
         QProcess dpkgProcess;
@@ -232,7 +232,7 @@ QStringList ScannerDevice::getAvailableDevices()
 
     if (!device_list) {
         qWarning() << "Device list is null, but status was GOOD";
-        emit scanError("Device list is null");
+        emit errorOccurred("Device list is null");
         
         // 添加虚拟测试设备
         deviceNames.append("test:0");
@@ -270,7 +270,7 @@ QStringList ScannerDevice::getAvailableDevices()
 
 #ifdef ENABLE_POPUPS
         // 建议一些可能的解决方法
-        emit scanError(tr("未找到扫描设备。以下操作可能有帮助:\n"
+        emit errorOccurred(tr("未找到扫描设备。以下操作可能有帮助:\n"
                         "1. 确保扫描仪已连接并开机\n"
                         "2. 运行命令: sudo gpasswd -a $USER scanner\n"
                         "3. 重新启动SANE: sudo service saned restart\n"
@@ -282,7 +282,7 @@ QStringList ScannerDevice::getAvailableDevices()
     }
 
 #else
-    emit scanError("SANE backend not available on this platform.");
+    emit errorOccurred("SANE backend not available on this platform.");
     deviceNames.append("test:0");   // 在Windows上也添加测试设备
 #endif
     return deviceNames;
@@ -300,7 +300,7 @@ bool ScannerDevice::openDevice(const QString &deviceName)
     }
 
     if (!m_saneInitialized) {
-        emit scanError("SANE not initialized. Call initializeSane() first.");
+        emit errorOccurred("SANE not initialized. Call initializeSane() first.");
         return false;
     }
     if (m_deviceOpen) {
@@ -314,7 +314,7 @@ bool ScannerDevice::openDevice(const QString &deviceName)
                                    .arg(deviceName)
                                    .arg(sane_strstatus(status));
         qWarning() << errorMsg;
-        emit scanError(errorMsg);
+        emit errorOccurred(errorMsg);
         m_device = nullptr;
         m_deviceOpen = false;
         return false;
@@ -351,7 +351,7 @@ bool ScannerDevice::openDevice(const QString &deviceName)
         qDebug() << "Opened virtual test scanner device on Windows";
         return true;
     } else {
-        emit scanError("SANE backend not available on this platform.");
+        emit errorOccurred("SANE backend not available on this platform.");
     }
 #endif
     return false;
@@ -398,7 +398,7 @@ void ScannerDevice::startScan(const QString &tempOutputFilePath)
     }
 
     if (!m_deviceOpen || !m_device) {
-        emit scanError(tr("扫描仪未打开"));
+        emit errorOccurred(tr("扫描仪未打开"));
         return;
     }
     
@@ -408,7 +408,7 @@ void ScannerDevice::startScan(const QString &tempOutputFilePath)
     SANE_Parameters params;
     SANE_Status status = sane_get_parameters(m_device, &params);
     if (status != SANE_STATUS_GOOD) {
-        emit scanError(tr("无法获取扫描仪参数: %1").arg(sane_strstatus(status)));
+        emit errorOccurred(tr("无法获取扫描仪参数: %1").arg(sane_strstatus(status)));
         return;
     }
 
@@ -423,7 +423,7 @@ void ScannerDevice::startScan(const QString &tempOutputFilePath)
     // Start the scan frame
     status = sane_start(m_device);
     if (status != SANE_STATUS_GOOD) {
-        emit scanError(tr("启动扫描失败: %1").arg(sane_strstatus(status)));
+        emit errorOccurred(tr("启动扫描失败: %1").arg(sane_strstatus(status)));
         return;
     }
 
@@ -435,7 +435,7 @@ void ScannerDevice::startScan(const QString &tempOutputFilePath)
     if (!ofp) {
         QString errorMsg = QString("Failed to open temporary output file '%1' for writing.").arg(tempOutputFilePath);
         qWarning() << errorMsg;
-        emit scanError(errorMsg);
+        emit errorOccurred(errorMsg);
         sane_cancel(m_device);   // Cancel the scan started above
         return;
     }
@@ -450,7 +450,7 @@ void ScannerDevice::startScan(const QString &tempOutputFilePath)
         // EOF is expected at the end of a successful scan, so don't treat it as an error here.
         QString errorMsg = QString("Scan failed during read: %1").arg(sane_strstatus(status));
         qWarning() << errorMsg;
-        emit scanError(errorMsg);
+        emit errorOccurred(errorMsg);
         QFile::remove(tempOutputFilePath);   // Clean up temp file on error
         // sane_cancel(m_device); // scan_it might have implicitly cancelled or finished
     } else {
@@ -459,11 +459,11 @@ void ScannerDevice::startScan(const QString &tempOutputFilePath)
         QImage scannedImage;
         if (scannedImage.load(tempOutputFilePath)) {
             qDebug() << "Successfully loaded scanned image from temp file.";
-            emit scanCompleted(scannedImage);
+            emit imageCaptured(scannedImage);
         } else {
             QString errorMsg = QString("Failed to load QImage from temporary file '%1'.").arg(tempOutputFilePath);
             qWarning() << errorMsg;
-            emit scanError(errorMsg);
+            emit errorOccurred(errorMsg);
         }
         // Clean up the temporary file
         if (!QFile::remove(tempOutputFilePath)) {
@@ -480,7 +480,7 @@ void ScannerDevice::startScan(const QString &tempOutputFilePath)
         generateTestImage(tempOutputFilePath);
         return;
     } else {
-        emit scanError("SANE backend not available on this platform.");
+        emit errorOccurred("SANE backend not available on this platform.");
     }
 #endif
 }
@@ -867,8 +867,17 @@ cleanup:
 #endif   // !_WIN32
 
 // 添加一个新方法来生成测试图像
-void ScannerDevice::generateTestImage(const QString &outputPath)
+void ScannerDevice::generateTestImage(const QString & /*outputPath*/)
 {
+    // 确保/tmp/deepin-scanner目录存在
+    QDir tempDir("/tmp/deepin-scanner");
+    if (!tempDir.exists()) {
+        tempDir.mkpath("/tmp/deepin-scanner");
+    }
+
+    // 使用QUuid生成随机文件名，格式为scan_随机UUID.png
+    QString fileName = QString("scan_temp.png");
+    QString outputPath = QString("/tmp/deepin-scanner/%1").arg(fileName);
     qDebug() << "Generating test image at:" << outputPath;
 
     // 创建一个测试图像
@@ -918,9 +927,9 @@ void ScannerDevice::generateTestImage(const QString &outputPath)
         }
 
         emit scanProgress(100);   // 100%
-        emit scanCompleted(testImage);
+        emit imageCaptured(testImage);
     } else {
-        emit scanError(tr("无法保存测试图像"));
+        emit errorOccurred(tr("无法保存测试图像"));
     }
 }
 

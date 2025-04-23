@@ -39,16 +39,16 @@ public:
     QStringList getAvailableDevices() override;
     bool openDevice(const QString &devicePath) override;
     void closeDevice() override;
-    void startCapture() override { startPreview(); }
-    void stopCapture() override { stopPreview(); }
-    bool isCapturing() const override { return m_previewTimer.isActive(); }
+    void startCapture() override;
+    void stopCapture() override;
+    bool isCapturing() const override;
     DeviceType getDeviceType() const override { return DeviceType::Webcam; }
     QString currentDeviceName() const override { return m_currentDeviceName; }
 
     // Extended webcam-specific interface
     void startPreview();
     void stopPreview();
-    void captureImage();
+
     QWidget *getVideoWidget();
     QSize getMaxResolution();
     bool setResolution(int width, int height);
@@ -83,8 +83,8 @@ public:
 
 signals:
     void captureStarted();
-    void captureCompleted(const QImage &image);
-    void captureError(const QString &error);
+    // void scanCompleted(const QImage &image);
+    // void captureError(const QString &error);
     // 新增信号
     void resolutionsChanged(const QList<QSize> &resolutions);
 
@@ -112,6 +112,7 @@ private:
     bool initMmap();
     void uninitMmap();
     QImage frameToQImage(const void *data, int width, int height, int format);
+    void captureImage();
     bool startCapturing();
     void stopCapturing();
     bool selectBestPixelFormat();

@@ -5,6 +5,9 @@
 #include <DPushButton>
 #include <DLabel>
 #include <QDebug>
+#include <QStandardPaths>
+#include <QDir>
+#include <QDateTime>
 
 ScanWidget::ScanWidget(QWidget *parent) : QWidget(parent),
     m_isScanner(false),
@@ -19,22 +22,22 @@ ScanWidget::ScanWidget(QWidget *parent) : QWidget(parent),
 
 void ScanWidget::setupUI()
 {
-    splitter = new QSplitter(Qt::Horizontal, this);
+    QSplitter *splitter = new QSplitter(Qt::Horizontal, this);
     
     // Preview area (3/4 width)
-    previewArea = new QWidget();
+    QWidget *previewArea = new QWidget();
     previewArea->setMinimumSize(480, 360);
     QVBoxLayout *previewLayout = new QVBoxLayout(previewArea);
     
-    previewLabel = new DLabel();
-    previewLabel->setAlignment(Qt::AlignCenter);
-    previewLabel->setSizePolicy(QSizePolicy::Expanding, QSizePolicy::Expanding);
-    previewLayout->addWidget(previewLabel);
+    m_previewLabel = new DLabel();
+    m_previewLabel->setAlignment(Qt::AlignCenter);
+    m_previewLabel->setSizePolicy(QSizePolicy::Expanding, QSizePolicy::Expanding);
+    previewLayout->addWidget(m_previewLabel);
     
     splitter->addWidget(previewArea);
     
     // Settings area (1/4 width)
-    settingsArea = new QWidget();
+    QWidget *settingsArea = new QWidget();
     QVBoxLayout *settingsLayout = new QVBoxLayout(settingsArea);
     
     // Device settings group
@@ -90,7 +93,7 @@ void ScanWidget::setupUI()
     settingsLayout->addWidget(scanButton);
     settingsLayout->addWidget(saveButton);
     
-    connect(scanButton, &DPushButton::clicked, this, &ScanWidget::scanRequested);
+    connect(scanButton, &DPushButton::clicked, this, &ScanWidget::startScanning);
     connect(saveButton, &DPushButton::clicked, this, &ScanWidget::saveRequested);
 
     splitter->addWidget(settingsArea);
@@ -104,6 +107,8 @@ void ScanWidget::setupDeviceMode(QSharedPointer<DeviceBase> device, QString name
 {
     if (!device) return;
     
+    // disconnect device signals
+    connectDeviceSignals(false);
     // 释放之前的设备
     if (m_device) {
         m_device->closeDevice();
@@ -118,46 +123,48 @@ void ScanWidget::setupDeviceMode(QSharedPointer<DeviceBase> device, QString name
         qWarning() << "无法打开设备:" << name;
         return;
     }
+    // clear all combo boxes
+    m_modeCombo->clear();
+    m_resolutionCombo->clear();
+    m_colorCombo->clear();
+    m_formatCombo->clear();
 
     m_device = device;
-    
     if (m_isScanner) {
         m_modeLabel->setText(tr("扫描模式"));
         m_modeCombo->addItems({"平板", "ADF", "双面"});
     } else {
         m_modeLabel->setText(tr("视频格式"));
-        m_modeCombo->addItems({"MJPG", "YUYV", "H264"});
+        m_modeCombo->addItems({"MJPG"}); //"YUYV", "H264"
     }
     m_colorCombo->addItems({"彩色", "灰度", "黑白"});
-    m_formatCombo->addItems({"PNG", "JPG", "TIFF", "OFD"});
+    m_formatCombo->addItems({"PNG", "JPG", "BMP", "TIFF", "PDF", "OFD"});
     
-    connectDeviceSignals();
     updateDeviceSettings();
+    connectDeviceSignals(true);
 }
 
-void ScanWidget::connectDeviceSignals()
+void ScanWidget::connectDeviceSignals(bool bind)
 {
     if (!m_device) return;
     
-    if (m_isScanner) {
-        auto scanner = qSharedPointerDynamicCast<ScannerDevice>(m_device);
-        if (scanner) {
-            // 使用data()获取原始指针并添加生命周期管理
-            connect(scanner.data(), &ScannerDevice::previewLineAvailable,
-                   this, &ScanWidget::setPreviewImage);
-            connect(scanner.data(), &ScannerDevice::scanError,
-                   this, &ScanWidget::handleDeviceError);
-        }
+    if (bind) {
+        connect(m_device.data(), &DeviceBase::imageCaptured, this, &ScanWidget::onScanFinished);
+        connect(m_device.data(), &ScannerDevice::errorOccurred, this, &ScanWidget::handleDeviceError);
     } else {
-        auto webcam = qSharedPointerDynamicCast<WebcamDevice>(m_device);
-        if (webcam) {
-            // 使用data()获取原始指针并添加生命周期管理
-            connect(webcam.data(), &WebcamDevice::captureCompleted,
-                   this, &ScanWidget::setPreviewImage);
-            connect(webcam.data(), &WebcamDevice::captureError,
-                   this, &ScanWidget::handleDeviceError);
-        }
+        disconnect(m_device.data(), &DeviceBase::imageCaptured, this, &ScanWidget::onScanFinished);
+        disconnect(m_device.data(), &ScannerDevice::errorOccurred, this, &ScanWidget::handleDeviceError);
     }
+}
+
+void ScanWidget::startScanning()
+{
+    if (!m_device) {
+        handleDeviceError(tr("设备未初始化"));
+        return;
+    }
+
+    m_device->startCapture();
 }
 
 void ScanWidget::updateDeviceSettings()
@@ -191,14 +198,14 @@ void ScanWidget::startCameraPreview()
     } else {
         auto webcam = qSharedPointerDynamicCast<WebcamDevice>(m_device);
         if (webcam) {
-            previewLabel->setText(tr("预览初始化中..."));
+            m_previewLabel->setText(tr("预览初始化中..."));
             webcam->stopPreview();   // 确保先停止任何预览
             QTimer::singleShot(100, [webcam]() {
                 webcam->startPreview();
             });
             m_previewTimer.start();
         } else {
-            previewLabel->setText(tr("设备无法预览"));
+            m_previewLabel->setText(tr("设备无法预览"));
         }
     }
 }
@@ -239,23 +246,23 @@ void ScanWidget::updatePreview()
 void ScanWidget::setPreviewImage(const QImage &image)
 {
     if (image.isNull()) {
-        previewLabel->setText(tr("无预览图像"));
+        m_previewLabel->setText(tr("无预览图像"));
         return;
     }
     
     QMutexLocker locker(&m_previewMutex);
     QPixmap pixmap = QPixmap::fromImage(image);
-    QPixmap scaled = pixmap.scaled(previewLabel->size(),
+    QPixmap scaled = pixmap.scaled(m_previewLabel->size(),
                                   Qt::KeepAspectRatio,
                                   Qt::SmoothTransformation);
-    previewLabel->setPixmap(scaled);
-    previewLabel->setAlignment(Qt::AlignCenter);
+    m_previewLabel->setPixmap(scaled);
+    m_previewLabel->setAlignment(Qt::AlignCenter);
 }
 
 void ScanWidget::handleDeviceError(const QString &error)
 {
     qWarning() << "Device error:" << error;
-    previewLabel->setText(error);
+    m_previewLabel->setText(error);
 }
 
 // 以下为参数变更处理函数
@@ -292,6 +299,28 @@ void ScanWidget::onFormatChanged(int index)
 {
     // 实现格式变更逻辑
     emit deviceSettingsChanged();
+}
+
+void ScanWidget::onScanFinished(const QImage &image)
+{
+    // 确保Documents/scan目录存在
+    QDir documentsDir(QStandardPaths::writableLocation(QStandardPaths::DocumentsLocation));
+    if (!documentsDir.mkpath("scan")) {
+        qWarning() << "Failed to create scan directory";
+        return;
+    }
+    
+    // 生成带时间戳的文件名
+    QString fileName = QString("scan_%1.png")
+        .arg(QDateTime::currentDateTime().toString("yyyyMMdd_hhmmss"));
+    
+    // 保存图片
+    QString filePath = documentsDir.filePath("scan/" + fileName);
+    if(image.save(filePath, "PNG")) {
+        qDebug() << "Scan saved to:" << filePath;
+    } else {
+        qWarning() << "Failed to save scan to:" << filePath;
+    }
 }
 
 void ScanWidget::onScanModeChanged(int index)

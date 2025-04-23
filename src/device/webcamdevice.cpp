@@ -255,7 +255,7 @@ bool WebcamDevice::setResolution(int width, int height)
 
     // 如果没有设备路径，无法继续
     if (devicePath.isEmpty()) {
-        emit captureError(tr("无法获取设备路径，无法设置分辨率"));
+        emit errorOccurred(tr("无法获取设备路径，无法设置分辨率"));
         return false;
     }
 
@@ -264,7 +264,7 @@ bool WebcamDevice::setResolution(int width, int height)
     m_fd = open(devicePath.toUtf8().constData(), O_RDWR);
     if (m_fd <= 0) {
         qDebug() << "重新打开设备失败:" << strerror(errno);
-        emit captureError(tr("重新打开设备失败"));
+        emit errorOccurred(tr("重新打开设备失败"));
         return false;
     }
 
@@ -314,7 +314,7 @@ bool WebcamDevice::setResolution(int width, int height)
         qDebug() << "所有尝试都失败，无法设置分辨率";
         close(m_fd);
         m_fd = -1;
-        emit captureError(tr("无法设置请求的分辨率"));
+        emit errorOccurred(tr("无法设置请求的分辨率"));
         return false;
     }
 
@@ -328,7 +328,7 @@ bool WebcamDevice::setResolution(int width, int height)
         qDebug() << "初始化内存映射失败";
         close(m_fd);
         m_fd = -1;
-        emit captureError(tr("内存映射失败"));
+        emit errorOccurred(tr("内存映射失败"));
         return false;
     }
 
@@ -351,11 +351,27 @@ bool WebcamDevice::setResolution(int width, int height)
     return true;
 }
 
+void WebcamDevice::startCapture()
+{
+    captureImage();
+}
+
+void WebcamDevice::stopCapture()
+{
+    stopCapturing();
+    setState(Connected);
+}
+
+bool WebcamDevice::isCapturing() const
+{
+    return state() == Capturing;
+}
+
 bool WebcamDevice::startCapturing()
 {
     if (m_fd <= 0 || !m_isInitialized) {
         qDebug() << "无法启动捕获：设备未初始化或文件描述符无效";
-        emit captureError(tr("设备未正确初始化"));
+        emit errorOccurred(tr("设备未正确初始化"));
         return false;
     }
 
@@ -385,7 +401,7 @@ bool WebcamDevice::startCapturing()
     if (validBufferCount == 0) {
         qDebug() << "没有有效的缓冲区可用，尝试重新初始化内存映射";
         if (!initMmap()) {
-            emit captureError(tr("缓冲区无法初始化"));
+            emit errorOccurred(tr("缓冲区无法初始化"));
             return false;
         }
 
@@ -401,7 +417,7 @@ bool WebcamDevice::startCapturing()
 
         if (validBufferCount == 0) {
             qDebug() << "重新初始化后仍无有效缓冲区";
-            emit captureError(tr("缓冲区重新初始化失败"));
+            emit errorOccurred(tr("缓冲区重新初始化失败"));
             return false;
         }
     }
@@ -432,7 +448,7 @@ bool WebcamDevice::startCapturing()
                 qDebug() << "  错误原因: I/O错误 - 设备可能已断开连接";
             }
 
-            emit captureError(tr("入队缓冲区失败: %1").arg(strerror(errno)));
+            emit errorOccurred(tr("入队缓冲区失败: %1").arg(strerror(errno)));
             return false;
         }
 
@@ -443,7 +459,7 @@ bool WebcamDevice::startCapturing()
     v4l2_buf_type type = V4L2_BUF_TYPE_VIDEO_CAPTURE;
     if (ioctl(m_fd, VIDIOC_STREAMON, &type) == -1) {
         qDebug() << "启动视频流失败:" << strerror(errno);
-        emit captureError(tr("启动视频流失败: %1").arg(strerror(errno)));
+        emit errorOccurred(tr("启动视频流失败: %1").arg(strerror(errno)));
         return false;
     }
 
@@ -537,7 +553,7 @@ void WebcamDevice::captureImage()
 {
     // 检查设备状态
     if (!m_isInitialized || m_fd <= 0) {
-        emit captureError(tr("设备未初始化或文件描述符无效"));
+        emit errorOccurred(tr("设备未初始化或文件描述符无效"));
         return;
     }
 
@@ -562,7 +578,7 @@ void WebcamDevice::captureImage()
 
         // 开始捕获流程
         if (!startCapturing()) {
-            emit captureError(tr("无法启动视频流，捕获失败"));
+            emit errorOccurred(tr("无法启动视频流，捕获失败"));
             return;
         }
 
@@ -598,12 +614,12 @@ void WebcamDevice::captureImage()
                         stopCapturing();
                     }
 
-                    emit captureCompleted(capturedImage);
+                    emit imageCaptured(capturedImage);
                     return;
                 }
 
                 // 如果没有可用的预览帧，报告错误
-                emit captureError(tr("无法获取图像帧"));
+                emit errorOccurred(tr("无法获取图像帧"));
 
                 // 恢复预览状态
                 if (previewWasRunning) {
@@ -646,7 +662,7 @@ void WebcamDevice::captureImage()
             }
 
             qDebug() << "成功捕获图像";
-            emit captureCompleted(image);
+            emit imageCaptured(image);
             return;
         } else {
             qDebug() << "图像转换失败，重试";
@@ -657,7 +673,7 @@ void WebcamDevice::captureImage()
     }
 
     // 如果所有尝试都失败
-    emit captureError(tr("无法捕获有效图像，请检查摄像头连接"));
+    emit errorOccurred(tr("无法捕获有效图像，请检查摄像头连接"));
 
     // 恢复预览状态
     if (previewWasRunning) {

@@ -2,7 +2,9 @@
 #include <QSharedPointer>
 #include <QHBoxLayout>
 #include <DLabel>
+#include <DFrame>
 #include <QListWidgetItem>
+#include <QGraphicsDropShadowEffect>
 #include <DIcon>
 
 ScannersWidget::ScannersWidget(QWidget *parent) : QWidget(parent)
@@ -25,22 +27,17 @@ void ScannersWidget::setupUI()
 
     // Device list
     deviceList = new QListWidget();
-    deviceList->setStyleSheet(
-        "QListWidget { border: 1px solid #ddd; border-radius: 4px; }"
-        "QListWidget::item { border-bottom: 1px solid #eee; }"
-        "QListWidget::item:hover { background: #f5f5f5; }"
-    );
+    // deviceList->setStyleSheet(
+    //     "QListWidget { border: 1px solid #ddd; border-radius: 10px; spacing: 10px; }"
+    //     "QListWidget::item { border-bottom: 1px solid #eee; }"
+    //     "QListWidget::item:hover { background: #f5f5f5; }"
+    // );
+    deviceList->setSpacing(10);
     mainLayout->addWidget(deviceList);
 
     connect(refreshButton, &QPushButton::clicked, this, [this](){
         emit updateDeviceListRequested();
     });
-    
-    // connect(deviceList, &QListWidget::itemClicked, this, [this](QListWidgetItem *item){
-    //     QString deviceName = item->data(Qt::UserRole).toString();
-    //     bool isScanner = item->data(Qt::UserRole + 1).toBool();
-    //     emit deviceSelected(deviceName, isScanner);
-    // });
 }
 
 void ScannersWidget::updateDeviceList(QSharedPointer<ScannerDevice> scanner, QSharedPointer<WebcamDevice> webcam)
@@ -75,14 +72,40 @@ void ScannersWidget::addDeviceItem(const QString &name, const QString &model,
     item->setData(Qt::UserRole, name);
     item->setData(Qt::UserRole + 1, isScanner);
     
-    QWidget *itemWidget = new QWidget();
+    DFrame *itemWidget = new DFrame();
+    // // 设置阴影效果和背景色
+    // itemWidget->setStyleSheet(R"(
+    //     DFrame {
+    //         background-color: #f5f5f5;  /* 淡灰色背景 */
+    //         border-radius: 8px;
+    //         border: 1px solid #e0e0e0;
+    //         padding: 5px;
+    //     }
+    //     DFrame:hover {
+    //         background-color: #eeeeee;  /* 鼠标悬停时稍深的灰色 */
+    //     }
+    // )");
+    itemWidget->setGraphicsEffect(new QGraphicsDropShadowEffect());
+    QGraphicsDropShadowEffect *shadow = new QGraphicsDropShadowEffect(itemWidget);
+    shadow->setBlurRadius(10);  // 阴影模糊半径
+    shadow->setOffset(2, 2);    // 阴影偏移
+    shadow->setColor(QColor(0, 0, 0, 50));  // 半透明黑色阴影
+    itemWidget->setGraphicsEffect(shadow);
+    itemWidget->setBackgroundRole(QPalette::Window);
+
     QHBoxLayout *layout = new QHBoxLayout(itemWidget);
     
     // Device icon
     DLabel *iconLabel = new DLabel();
     // TODO: Replace with actual device icon
-    // iconLabel->setPixmap(DIcon(isScanner ? ":/icons/scanner.png" : ":/icons/webcam.png")
-    //                      .pixmap(32, 32));
+    iconLabel->setFixedSize(150, 150);
+    QIcon icon;
+    if (isScanner) {
+        icon = QIcon::fromTheme("scanner");
+    } else {
+        icon = QIcon::fromTheme("camera");
+    }
+    iconLabel->setPixmap(icon.pixmap(150, 150));
     layout->addWidget(iconLabel);
     
     // Device info
@@ -93,13 +116,18 @@ void ScannersWidget::addDeviceItem(const QString &name, const QString &model,
     infoLayout->addWidget(nameLabel);
     infoLayout->addWidget(modelLabel);
     infoLayout->addWidget(statusLabel);
+    infoLayout->setMargin(10);
     layout->addLayout(infoLayout);
+    layout->addStretch();
     
     // Scan button
     DPushButton *scanButton = new DPushButton(tr("扫描"));
     scanButton->setProperty("deviceName", name);
     scanButton->setProperty("isScanner", isScanner);
+    scanButton->setFixedWidth(150);
+    scanButton->setFixedHeight(60);
     layout->addWidget(scanButton);
+    layout->setMargin(10);
     
     connect(scanButton, &DPushButton::clicked, this, [this, name, isScanner](){
         emit deviceSelected(name, isScanner);
@@ -111,7 +139,7 @@ void ScannersWidget::addDeviceItem(const QString &name, const QString &model,
         scanButton->setEnabled(false);
     }
     
-    itemWidget->setLayout(layout);
+    // itemWidget->setLayout(layout);
     item->setSizeHint(itemWidget->sizeHint());
     deviceList->setItemWidget(item, itemWidget);
 }

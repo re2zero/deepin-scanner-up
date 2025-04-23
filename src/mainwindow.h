@@ -2,6 +2,7 @@
 #define MAINWINDOW_H
 
 #include <DMainWindow>
+#include <DIconButton>
 #include <QStackedLayout>
 #include <QComboBox> // <--- 添加 QComboBox 用于分辨率选择
 
@@ -36,6 +37,9 @@ private slots:
     void showScanView(const QString &device, bool isScanner);
     void showDeviceListView();
     void updateDeviceList();
+
+private:
+    DIconButton *m_backBtn = nullptr;
 };
 
 #endif // MAINWINDOW_H

@@ -28,8 +28,12 @@ public:
 
 signals:
     void scanRequested();
+    void scanFinished(const QImage &image);
     void saveRequested();
     void deviceSettingsChanged();
+
+public slots:
+    void startScanning();
 
 private slots:
     void updatePreview();
@@ -37,11 +41,12 @@ private slots:
     void onColorModeChanged(int index);
     void onFormatChanged(int index);
     void onScanModeChanged(int index);
+    void onScanFinished(const QImage &image);
     void handleDeviceError(const QString &error);
 
 private:
     void setupUI();
-    void connectDeviceSignals();
+    void connectDeviceSignals(bool bind);
     void updateDeviceSettings();
 
     QSharedPointer<DeviceBase> m_device;
@@ -49,10 +54,8 @@ private:
     QTimer m_previewTimer;
     QMutex m_previewMutex;
     
-    DLabel *previewLabel = nullptr;
-    QSplitter *splitter;
-    QWidget *previewArea;
-    QWidget *settingsArea;
+    // preview area
+    DLabel *m_previewLabel;
 
     DLabel *m_modeLabel;
     QComboBox *m_modeCombo;
