@@ -78,9 +78,16 @@ if(UNIX AND NOT APPLE)
 endif()
 
 # 添加资源文件
-qt_add_resources(qrc_RESOURCES
-    ${CMAKE_SOURCE_DIR}/resources/resources.qrc
-)
+if(QT_DESIRED_VERSION MATCHES 6)
+    qt_add_resources(qrc_RESOURCES
+        ${CMAKE_SOURCE_DIR}/resources/resources.qrc
+    )
+else()
+    qt5_add_resources(qrc_RESOURCES
+        ${CMAKE_SOURCE_DIR}/resources/resources.qrc
+    )
+endif()
+
 target_sources(${PROJECT_NAME} PRIVATE ${qrc_RESOURCES})
 
 # 安装目标

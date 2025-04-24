@@ -3,13 +3,10 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
 
 #include "scanwidget.h"
+
 #include <QVBoxLayout>
 #include <QGroupBox>
 #include <QComboBox>
-#include <DFrame>
-#include <DPushButton>
-#include <DIconButton>
-#include <DLabel>
 #include <QGraphicsDropShadowEffect>
 #include <QDebug>
 #include <QStandardPaths>
@@ -17,6 +14,12 @@
 #include <QDateTime>
 #include <QPlainTextEdit>
 #include <QDesktopServices>
+#include <QPrinter>
+
+#include <DFrame>
+#include <DPushButton>
+#include <DIconButton>
+#include <DLabel>
 
 static const QStringList FORMATS = { "PNG", "JPG", "BMP", "TIFF", "PDF", "OFD" };
 
@@ -442,9 +445,26 @@ void ScanWidget::onScanFinished(const QImage &image)
 
     if (m_imageSettings->format < 4) {   // PNG/JPG/BMP/TIFF
         saveSuccess = processedImage.save(filePath, FORMATS[m_imageSettings->format].toLatin1().constData());
+    } else if (m_imageSettings->format == 4) {   // PDF
+        QPrinter printer(QPrinter::HighResolution);
+        printer.setOutputFormat(QPrinter::PdfFormat);
+        printer.setOutputFileName(filePath);
+        printer.setPageSize(QPageSize(QPageSize::A4));
+        
+        QPainter painter;
+        if (painter.begin(&printer)) {
+            QRect rect = painter.viewport();
+            QSize size = processedImage.size();
+            size.scale(rect.size(), Qt::KeepAspectRatio);
+            painter.setViewport(rect.x(), rect.y(), size.width(), size.height());
+            painter.setWindow(processedImage.rect());
+            painter.drawImage(0, 0, processedImage);
+            painter.end();
+            saveSuccess = true;
+        }
     } else {
-        // PDF/OFD格式暂未实现
-        qWarning() << "PDF/OFD格式暂未实现";
+        // OFD格式暂未实现
+        qWarning() << "OFD格式暂未实现";
         return;
     }
 
