@@ -32,8 +32,6 @@ file(GLOB_RECURSE SOURCES
     "*.cpp"
     "*.c"
     "*.h"
-    # "ui/*.cpp"
-    # "ui/*.h"
 )
 
 # app sources
@@ -84,11 +82,11 @@ if(UNIX AND NOT APPLE)
     # No need for else here, pkg_check_modules already handles REQUIRED errors
 endif()
 
-# # 添加资源文件
-# qt_add_resources(qrc_RESOURCES
-#     ${CMAKE_SOURCE_DIR}/resources/resources.qrc
-# )
-# target_sources(${PROJECT_NAME} PRIVATE ${qrc_RESOURCES})
+# 添加资源文件
+qt_add_resources(qrc_RESOURCES
+    ${CMAKE_SOURCE_DIR}/resources/resources.qrc
+)
+target_sources(${PROJECT_NAME} PRIVATE ${qrc_RESOURCES})
 
 # 安装目标
 install(TARGETS ${PROJECT_NAME} 
@@ -97,17 +95,17 @@ install(TARGETS ${PROJECT_NAME}
 
 # 安装桌面文件和图标
 install(FILES
-    deepin-scanner.desktop
+    ${CMAKE_SOURCE_DIR}/resources/deepin-scanner.desktop
     DESTINATION ${CMAKE_INSTALL_DATADIR}/applications
 )
 
 install(FILES
-    deepin-scanner.svg
+    ${CMAKE_SOURCE_DIR}/resources/icons/deepin/builtin/icons/deepin-scanner.svg
     DESTINATION ${CMAKE_INSTALL_DATADIR}/icons/hicolor/scalable/apps
 )
 
-# 安装帮助文件
-install(DIRECTORY
-    ${CMAKE_SOURCE_DIR}/assets/
-    DESTINATION ${CMAKE_INSTALL_DATADIR}/deepin-manual/manual-assets/application
-)
+# # 安装帮助文件
+# install(DIRECTORY
+#     ${CMAKE_SOURCE_DIR}/assets/
+#     DESTINATION ${CMAKE_INSTALL_DATADIR}/deepin-manual/manual-assets/application
+# )

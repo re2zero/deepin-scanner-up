@@ -30,11 +30,11 @@ MainWindow::MainWindow(QWidget *parent)
     
     // Initialize SANE (Scanner)
     if (!scannerDevice->initializeSane()) {
-        QMessageBox::critical(this, tr("扫描仪错误"), tr("无法初始化 SANE 后端。\n请确保已安装 SANE 库 (如 sane-backends) 并且可能需要配置权限（例如将用户添加到 'scanner' 或 'saned' 组）。\n扫描仪功能将不可用。"));
+        QMessageBox::critical(this, tr("Scanner error"), tr("Failed to initialize SANE backend.\nPlease ensure SANE libraries (e.g. sane-backends) are installed and you may need to configure permissions (e.g. add user to 'scanner' or 'saned' group).\nScanner functionality will be unavailable."));
     }
 
     // --- 创建主界面 ---
-    setWindowTitle(tr("扫描与捕获管理器"));
+    setWindowTitle(tr("Document Scanner"));
     QRect screenRect = QGuiApplication::primaryScreen()->geometry();
     resize(screenRect.width() / 2, screenRect.height() / 2);
     move((screenRect.width() - width()) / 2, (screenRect.height() - height()) / 2);
@@ -124,25 +124,17 @@ void MainWindow::showScanView(const QString &device, bool isScanner)
     // 配置扫描界面，直接传递共享指针
     m_scanWidget->setupDeviceMode(m_currentDevicePtr, m_currentDevice);
     
-    // 设置预览内容
-    if (isScanner) {
-        // 显示扫描仪默认图片
-        QImage defaultScanImage (":/images/default_scan.png");
-        m_scanWidget->setPreviewImage(defaultScanImage);
-    } else {
-        // 启动摄像头预览
-        m_scanWidget->startCameraPreview();
-    }
+    m_scanWidget->startCameraPreview();
     
     // 切换到扫描界面
     m_stackLayout->setCurrentWidget(m_scanWidget);
 
-    m_backBtn->setVisible(true); // 隐藏
+    m_backBtn->setVisible(true);
 }
 
 void MainWindow::showDeviceListView()
 {
-    m_backBtn->setVisible(false); // 隐藏
+    m_backBtn->setVisible(false);
     // 切换到设备列表界面
     m_stackLayout->setCurrentWidget(m_scannersWidget);
 }

@@ -270,13 +270,13 @@ QStringList ScannerDevice::getAvailableDevices()
 
 #ifdef ENABLE_POPUPS
         // 建议一些可能的解决方法
-        emit errorOccurred(tr("未找到扫描设备。以下操作可能有帮助:\n"
-                        "1. 确保扫描仪已连接并开机\n"
-                        "2. 运行命令: sudo gpasswd -a $USER scanner\n"
-                        "3. 重新启动SANE: sudo service saned restart\n"
-                        "4. 安装所需的驱动包: sudo apt-get install libsane-extras\n"
-                        "5. 如果是网络扫描仪，检查网络配置\n"
-                        "6. 重新插拔USB连接或重启电脑"));
+        emit errorOccurred(tr("No scanner devices found. Possible solutions:\n"
+                        "1. Ensure scanner is connected and powered on\n"
+                        "2. Run command: sudo gpasswd -a $USER scanner\n"
+                        "3. Restart SANE: sudo service saned restart\n"
+                        "4. Install required driver package: sudo apt-get install libsane-extras\n"
+                        "5. For network scanners, check network configuration\n"
+                        "6. Reconnect USB cable or restart computer"));
 #endif
         
     }
@@ -398,7 +398,7 @@ void ScannerDevice::startScan(const QString &tempOutputFilePath)
     }
 
     if (!m_deviceOpen || !m_device) {
-        emit errorOccurred(tr("扫描仪未打开"));
+        emit errorOccurred(tr("Scanner not opened"));
         return;
     }
     
@@ -408,7 +408,7 @@ void ScannerDevice::startScan(const QString &tempOutputFilePath)
     SANE_Parameters params;
     SANE_Status status = sane_get_parameters(m_device, &params);
     if (status != SANE_STATUS_GOOD) {
-        emit errorOccurred(tr("无法获取扫描仪参数: %1").arg(sane_strstatus(status)));
+        emit errorOccurred(tr("Failed to get scanner parameters: %1").arg(sane_strstatus(status)));
         return;
     }
 
@@ -423,7 +423,7 @@ void ScannerDevice::startScan(const QString &tempOutputFilePath)
     // Start the scan frame
     status = sane_start(m_device);
     if (status != SANE_STATUS_GOOD) {
-        emit errorOccurred(tr("启动扫描失败: %1").arg(sane_strstatus(status)));
+        emit errorOccurred(tr("Failed to start scan: %1").arg(sane_strstatus(status)));
         return;
     }
 
@@ -929,7 +929,7 @@ void ScannerDevice::generateTestImage(const QString & /*outputPath*/)
         emit scanProgress(100);   // 100%
         emit imageCaptured(testImage);
     } else {
-        emit errorOccurred(tr("无法保存测试图像"));
+        emit errorOccurred(tr("Failed to save test image"));
     }
 }
 

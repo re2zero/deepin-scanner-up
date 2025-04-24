@@ -24,6 +24,11 @@ public:
         Webcam
     };
 
+    enum DeviceStatus {
+        Idle,
+        Offline
+    };
+
     explicit DeviceBase(QObject *parent = nullptr);
     virtual ~DeviceBase() = default;
 

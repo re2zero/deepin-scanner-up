@@ -1,18 +1,14 @@
 #ifndef SCANNERSWIDGET_H
 #define SCANNERSWIDGET_H
 
-#include <DWidget>
-#include <QVBoxLayout>
-#include <DListWidget>
-#include <DPushButton>
 #include "device/scannerdevice.h"
 #include "device/webcamdevice.h"
+
+#include <QVBoxLayout>
 #include <QSharedPointer>
 
 #include <DWidget>
-#include <DPushButton>
-#include <DLabel>
-#include <DListWidget>
+#include <DIconButton>
 
 DWIDGET_USE_NAMESPACE
 
@@ -31,11 +27,11 @@ signals:
 private:
     QVBoxLayout *mainLayout;
     QListWidget *deviceList;
-    QPushButton *refreshButton;
+    DIconButton *refreshButton;
     
     void setupUI();
-    void addDeviceItem(const QString &name, const QString &model, 
-                      const QString &status, bool isScanner);
+    void addDeviceItem(const QString &name, const QString &model,
+                      DeviceBase::DeviceStatus status, bool isScanner);
 };
 
 #endif // SCANNERSWIDGET_H

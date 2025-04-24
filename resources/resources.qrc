@@ -1,0 +1,18 @@
+<RCC>
+    <qresource prefix="/icons/deepin"/>
+    <qresource prefix="/">
+        <file>icons/deepin/builtin/dark/icons/blank_doc_128px.svg</file>
+        <file>icons/deepin/builtin/dark/icons/btn_scan_128px.svg</file>
+        <file>icons/deepin/builtin/dark/icons/ic_hicam_128px.svg</file>
+        <file>icons/deepin/builtin/dark/icons/ic_scanner_128px.svg</file>
+        <file>icons/deepin/builtin/dark/icons/refresh_128px.svg</file>
+        <file>icons/deepin/builtin/dark/icons/tab_scanner_128px.svg</file>
+        <file>icons/deepin/builtin/icons/deepin-scanner.svg</file>
+        <file>icons/deepin/builtin/light/icons/blank_doc_128px.svg</file>
+        <file>icons/deepin/builtin/light/icons/btn_scan_128px.svg</file>
+        <file>icons/deepin/builtin/light/icons/ic_hicam_128px.svg</file>
+        <file>icons/deepin/builtin/light/icons/ic_scanner_128px.svg</file>
+        <file>icons/deepin/builtin/light/icons/refresh_128px.svg</file>
+        <file>icons/deepin/builtin/light/icons/tab_scanner_128px.svg</file>
+    </qresource>
+</RCC>

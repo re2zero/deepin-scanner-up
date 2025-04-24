@@ -2,16 +2,26 @@
 #include <QVBoxLayout>
 #include <QGroupBox>
 #include <QComboBox>
+#include <DFrame>
 #include <DPushButton>
+#include <DIconButton>
 #include <DLabel>
+#include <QGraphicsDropShadowEffect>
 #include <QDebug>
 #include <QStandardPaths>
 #include <QDir>
 #include <QDateTime>
 
+static const QStringList FORMATS = {"PNG", "JPG", "BMP", "TIFF", "PDF", "OFD"};
+
+// fixed width for label and combo box
+static const int SETTING_LABEL_WIDTH = 120;
+static const int SETTING_COMBO_WIDTH = 220;
+
 ScanWidget::ScanWidget(QWidget *parent) : QWidget(parent),
     m_isScanner(false),
-    m_previewTimer(this)
+    m_previewTimer(this),
+    m_imageSettings(new ImageSettings())
 {
     setupUI();
     
@@ -24,10 +34,15 @@ void ScanWidget::setupUI()
 {
     QSplitter *splitter = new QSplitter(Qt::Horizontal, this);
     
-    // Preview area (3/4 width)
-    QWidget *previewArea = new QWidget();
+    // Preview area
+    DFrame *previewArea = new DFrame();
     previewArea->setMinimumSize(480, 360);
     QVBoxLayout *previewLayout = new QVBoxLayout(previewArea);
+    QGraphicsDropShadowEffect *shadow = new QGraphicsDropShadowEffect(previewArea);
+    shadow->setBlurRadius(10);
+    shadow->setOffset(2, 2);
+    previewArea->setGraphicsEffect(shadow);
+    previewArea->setBackgroundRole(QPalette::Window);
     
     m_previewLabel = new DLabel();
     m_previewLabel->setAlignment(Qt::AlignCenter);
@@ -36,69 +51,111 @@ void ScanWidget::setupUI()
     
     splitter->addWidget(previewArea);
     
-    // Settings area (1/4 width)
+    // Settings area
     QWidget *settingsArea = new QWidget();
     QVBoxLayout *settingsLayout = new QVBoxLayout(settingsArea);
+    settingsLayout->addSpacing(20);
     
+
+    DLabel *titleLabel = new DLabel(tr("Scan Settings"));
+    QFont font = titleLabel->font();
+    font.setBold(true);
+    font.setPointSize(font.pointSize() + 5);
+    titleLabel->setFont(font);
+    settingsLayout->addWidget(titleLabel);
+
     // Device settings group
-    QGroupBox *settingsGroup = new QGroupBox(tr("扫描设置"));
+    QGroupBox *settingsGroup = new QGroupBox();
     QVBoxLayout *groupLayout = new QVBoxLayout(settingsGroup);
+    groupLayout->setSpacing(10);
+    settingsGroup->setSizePolicy(QSizePolicy::Minimum, QSizePolicy::Preferred);
+    settingsGroup->setMinimumWidth(350);
     
     // Device mode options
     m_modeLabel = new DLabel();
+    m_modeLabel->setFixedWidth(SETTING_LABEL_WIDTH);
     m_modeCombo = new QComboBox();
+    m_modeCombo->setMaximumWidth(SETTING_COMBO_WIDTH);
     connect(m_modeCombo, QOverload<int>::of(&QComboBox::currentIndexChanged),
             this, &ScanWidget::onScanModeChanged);
     QHBoxLayout *modeLayout = new QHBoxLayout();
+    modeLayout->setSpacing(20);
     modeLayout->addWidget(m_modeLabel);
     modeLayout->addWidget(m_modeCombo);
     groupLayout->addLayout(modeLayout);
 
     // Resolution options
-    DLabel *resLabel = new DLabel(tr("分辨率"));
+    DLabel *resLabel = new DLabel(tr("Resolution"));
+    resLabel->setFixedWidth(SETTING_LABEL_WIDTH);
     m_resolutionCombo = new QComboBox();
+    m_resolutionCombo->setMaximumWidth(SETTING_COMBO_WIDTH);
     connect(m_resolutionCombo, QOverload<int>::of(&QComboBox::currentIndexChanged),
             this, &ScanWidget::onResolutionChanged);
     QHBoxLayout *resolutionLayout = new QHBoxLayout();
+    resolutionLayout->setSpacing(20);
     resolutionLayout->addWidget(resLabel);
     resolutionLayout->addWidget(m_resolutionCombo);
     groupLayout->addLayout(resolutionLayout);
 
     // Color mode options
-    DLabel *colorLabel = new DLabel(tr("色彩模式"));
+    DLabel *colorLabel = new DLabel(tr("Color Mode"));
+    colorLabel->setFixedWidth(SETTING_LABEL_WIDTH);
     m_colorCombo = new QComboBox();
+    m_colorCombo->setMaximumWidth(SETTING_COMBO_WIDTH);
     connect(m_colorCombo, QOverload<int>::of(&QComboBox::currentIndexChanged),
             this, &ScanWidget::onColorModeChanged);
     QHBoxLayout *colorLayout = new QHBoxLayout();
+    colorLayout->setSpacing(20);
     colorLayout->addWidget(colorLabel);
     colorLayout->addWidget(m_colorCombo);
     groupLayout->addLayout(colorLayout);
 
     // Format options
-    DLabel *formatLabel = new DLabel(tr("图片格式"));
+    DLabel *formatLabel = new DLabel(tr("Image Format"));
+    formatLabel->setFixedWidth(SETTING_LABEL_WIDTH);
     m_formatCombo = new QComboBox();
+    m_formatCombo->setMaximumWidth(SETTING_COMBO_WIDTH);
     connect(m_formatCombo, QOverload<int>::of(&QComboBox::currentIndexChanged),
             this, &ScanWidget::onFormatChanged);
     QHBoxLayout *formatLayout = new QHBoxLayout();
+    formatLayout->setSpacing(20);
     formatLayout->addWidget(formatLabel);
     formatLayout->addWidget(m_formatCombo);
     groupLayout->addLayout(formatLayout);
     
     settingsLayout->addWidget(settingsGroup);
-    settingsLayout->addStretch();
+    settingsLayout->addSpacing(100);
+
+    QWidget *bottomWidget = new QWidget();
+    QVBoxLayout *buttonLayout = new QVBoxLayout(bottomWidget);
     
     // Action buttons
-    DPushButton *scanButton = new DPushButton(tr("扫描"));
-    DPushButton *saveButton = new DPushButton(tr("保存"));
-    settingsLayout->addWidget(scanButton);
-    settingsLayout->addWidget(saveButton);
-    
+    DIconButton *scanButton = new DIconButton();
+    scanButton->setIcon(QIcon::fromTheme("btn_scan"));
+    scanButton->setIconSize(QSize(120, 120));
+    scanButton->setFixedSize(160, 160);
+    scanButton->setBackgroundRole(QPalette::Highlight);
+    DPushButton *viewButton = new DPushButton(tr("View Scanned Image"));
+    viewButton->setFixedWidth(220);
+
+    buttonLayout->addWidget(scanButton, 0, Qt::AlignHCenter);
+    buttonLayout->addSpacing(50);
+    buttonLayout->addWidget(viewButton, 0, Qt::AlignHCenter);
+    buttonLayout->addStretch();
+
+    settingsLayout->addWidget(bottomWidget);
+    settingsLayout->setAlignment(bottomWidget, Qt::AlignHCenter);
+
     connect(scanButton, &DPushButton::clicked, this, &ScanWidget::startScanning);
-    connect(saveButton, &DPushButton::clicked, this, &ScanWidget::saveRequested);
+    connect(viewButton, &DPushButton::clicked, this, &ScanWidget::saveRequested);
 
     splitter->addWidget(settingsArea);
-    splitter->setSizes({3, 1});
-    
+
+    // make splitter default to right-side compressed
+    splitter->setSizes({9, 1});
+    splitter->setStretchFactor(0, 1);  // left side stretchable
+    splitter->setStretchFactor(1, 0);  // right side not stretchable
+
     QVBoxLayout *mainLayout = new QVBoxLayout(this);
     mainLayout->addWidget(splitter);
 }
@@ -131,14 +188,21 @@ void ScanWidget::setupDeviceMode(QSharedPointer<DeviceBase> device, QString name
 
     m_device = device;
     if (m_isScanner) {
-        m_modeLabel->setText(tr("扫描模式"));
-        m_modeCombo->addItems({"平板", "ADF", "双面"});
+        m_modeLabel->setText(tr("Scan Mode"));
+        const QStringList scanModes = {tr("Flatbed"), tr("ADF"), tr("Duplex")};
+        m_modeCombo->addItems(scanModes);
     } else {
-        m_modeLabel->setText(tr("视频格式"));
-        m_modeCombo->addItems({"MJPG"}); //"YUYV", "H264"
+        m_modeLabel->setText(tr("Video Format"));
+        m_modeCombo->addItems({"MJPG"});
     }
-    m_colorCombo->addItems({"彩色", "灰度", "黑白"});
-    m_formatCombo->addItems({"PNG", "JPG", "BMP", "TIFF", "PDF", "OFD"});
+
+    const QStringList colorModes = {tr("Color"), tr("Grayscale"), tr("Black White")};
+    m_colorCombo->addItems(colorModes);
+    m_formatCombo->addItems(FORMATS);
+    
+    // 设置初始选中项
+    m_colorCombo->setCurrentIndex(m_imageSettings->colorMode);
+    m_formatCombo->setCurrentIndex(m_imageSettings->format);
     
     updateDeviceSettings();
     connectDeviceSignals(true);
@@ -160,7 +224,7 @@ void ScanWidget::connectDeviceSignals(bool bind)
 void ScanWidget::startScanning()
 {
     if (!m_device) {
-        handleDeviceError(tr("设备未初始化"));
+        handleDeviceError(tr("Device not initialized"));
         return;
     }
 
@@ -191,21 +255,20 @@ void ScanWidget::startCameraPreview()
     if (!m_device) return;
     
     if (m_isScanner) {
-        auto scanner = qSharedPointerDynamicCast<ScannerDevice>(m_device);
-        if (scanner) {
-            scanner->startScan("temp_scan.png");
-        }
+        QIcon icon = QIcon::fromTheme("blank_doc");
+        QPixmap pixmap = icon.pixmap(200, 200);
+        m_previewLabel->setPixmap(pixmap);
     } else {
         auto webcam = qSharedPointerDynamicCast<WebcamDevice>(m_device);
         if (webcam) {
-            m_previewLabel->setText(tr("预览初始化中..."));
-            webcam->stopPreview();   // 确保先停止任何预览
+            m_previewLabel->setText(tr("Initializing preview..."));
+            webcam->stopPreview();
             QTimer::singleShot(100, [webcam]() {
                 webcam->startPreview();
             });
             m_previewTimer.start();
         } else {
-            m_previewLabel->setText(tr("设备无法预览"));
+            m_previewLabel->setText(tr("Device preview not available"));
         }
     }
 }
@@ -246,7 +309,7 @@ void ScanWidget::updatePreview()
 void ScanWidget::setPreviewImage(const QImage &image)
 {
     if (image.isNull()) {
-        m_previewLabel->setText(tr("无预览图像"));
+        m_previewLabel->setText(tr("No preview image"));
         return;
     }
     
@@ -291,13 +354,13 @@ void ScanWidget::onResolutionChanged(int index)
 
 void ScanWidget::onColorModeChanged(int index)
 {
-    // 实现颜色模式变更逻辑
+    m_imageSettings->colorMode = index;
     emit deviceSettingsChanged();
 }
 
 void ScanWidget::onFormatChanged(int index)
 {
-    // 实现格式变更逻辑
+    m_imageSettings->format = index;
     emit deviceSettingsChanged();
 }
 
@@ -311,12 +374,32 @@ void ScanWidget::onScanFinished(const QImage &image)
     }
     
     // 生成带时间戳的文件名
-    QString fileName = QString("scan_%1.png")
-        .arg(QDateTime::currentDateTime().toString("yyyyMMdd_hhmmss"));
+    QString fileName = QString("scan_%1.%2")
+        .arg(QDateTime::currentDateTime().toString("yyyyMMdd_hhmmss"))
+        .arg(FORMATS[m_imageSettings->format].toLower());
+    
+    // 处理颜色模式转换
+    QImage processedImage = image;
+    // 处理颜色模式转换
+    if (m_imageSettings->colorMode == 1) { // GRAYSCALE
+        processedImage = image.convertToFormat(QImage::Format_Grayscale8);
+    } else if (m_imageSettings->colorMode == 2) { // BLACKWHITE
+        processedImage = image.convertToFormat(QImage::Format_Mono);
+    }
     
     // 保存图片
     QString filePath = documentsDir.filePath("scan/" + fileName);
-    if(image.save(filePath, "PNG")) {
+    bool saveSuccess = false;
+    
+    if (m_imageSettings->format < 4) { // PNG/JPG/BMP/TIFF
+        saveSuccess = processedImage.save(filePath, FORMATS[m_imageSettings->format].toLatin1().constData());
+    } else {
+        // PDF/OFD格式暂未实现
+        qWarning() << "PDF/OFD格式暂未实现";
+        return;
+    }
+    
+    if (saveSuccess) {
         qDebug() << "Scan saved to:" << filePath;
     } else {
         qWarning() << "Failed to save scan to:" << filePath;

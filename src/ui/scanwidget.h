@@ -6,6 +6,7 @@
 #include <QSharedPointer>
 #include <QTimer>
 #include <QMutex>
+#include <QScopedPointer>
 
 #include <DLabel>
 #include "device/devicebase.h"
@@ -15,6 +16,12 @@
 DWIDGET_USE_NAMESPACE
 
 class QComboBox;
+
+struct ImageSettings {
+    int colorMode = 0; // 0=COLOR, 1=GRAYSCALE, 2=BLACKWHITE
+    int format = 0;    // 0=PNG, 1=JPG, 2=BMP, 3=TIFF, 4=PDF, 5=OFD
+};
+
 class ScanWidget : public QWidget
 {
     Q_OBJECT
@@ -62,6 +69,8 @@ private:
     QComboBox *m_resolutionCombo;
     QComboBox *m_colorCombo;
     QComboBox *m_formatCombo;
+    
+    QScopedPointer<ImageSettings> m_imageSettings;
 };
 
 #endif // SCANWIDGET_H
