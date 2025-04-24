@@ -20,6 +20,7 @@
 DWIDGET_USE_NAMESPACE
 
 class QComboBox;
+class QPlainTextEdit;
 
 struct ImageSettings
 {
@@ -37,6 +38,9 @@ public:
     void setPreviewImage(const QImage &image);
     void startCameraPreview();
     void stopCameraPreview();
+
+    QString getSaveDirectory();
+    void setSaveDirectory(const QString &dir);
 
 signals:
     void scanRequested();
@@ -76,6 +80,8 @@ private:
     QComboBox *m_formatCombo;
 
     QScopedPointer<ImageSettings> m_imageSettings;
+    QPlainTextEdit *m_historyEdit;   // Scan history display box
+    QString m_saveDir;               // Custom save directory
 };
 
 #endif   // SCANWIDGET_H

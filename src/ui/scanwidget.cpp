@@ -15,6 +15,8 @@
 #include <QStandardPaths>
 #include <QDir>
 #include <QDateTime>
+#include <QPlainTextEdit>
+#include <QDesktopServices>
 
 static const QStringList FORMATS = { "PNG", "JPG", "BMP", "TIFF", "PDF", "OFD" };
 
@@ -58,7 +60,7 @@ void ScanWidget::setupUI()
     // Settings area
     QWidget *settingsArea = new QWidget();
     QVBoxLayout *settingsLayout = new QVBoxLayout(settingsArea);
-    settingsLayout->addSpacing(20);
+    settingsLayout->addSpacing(30);
 
     DLabel *titleLabel = new DLabel(tr("Scan Settings"));
     QFont font = titleLabel->font();
@@ -127,7 +129,7 @@ void ScanWidget::setupUI()
     groupLayout->addLayout(formatLayout);
 
     settingsLayout->addWidget(settingsGroup);
-    settingsLayout->addSpacing(100);
+    settingsLayout->addSpacing(50);
 
     QWidget *bottomWidget = new QWidget();
     QVBoxLayout *buttonLayout = new QVBoxLayout(bottomWidget);
@@ -139,18 +141,28 @@ void ScanWidget::setupUI()
     scanButton->setFixedSize(160, 160);
     scanButton->setBackgroundRole(QPalette::Highlight);
     DPushButton *viewButton = new DPushButton(tr("View Scanned Image"));
-    viewButton->setFixedWidth(220);
+    viewButton->setFixedSize(200, 50);
+    // viewButton->setFlat(true);
+    viewButton->setFocusPolicy(Qt::NoFocus);
 
     buttonLayout->addWidget(scanButton, 0, Qt::AlignHCenter);
     buttonLayout->addSpacing(50);
     buttonLayout->addWidget(viewButton, 0, Qt::AlignHCenter);
-    buttonLayout->addStretch();
 
     settingsLayout->addWidget(bottomWidget);
     settingsLayout->setAlignment(bottomWidget, Qt::AlignHCenter);
 
+    m_historyEdit = new QPlainTextEdit();
+    m_historyEdit->setReadOnly(true);
+    m_historyEdit->setPlaceholderText(tr("Scan history will be shown here"));
+
+    settingsLayout->addSpacing(20);
+    settingsLayout->addWidget(m_historyEdit);
+
     connect(scanButton, &DPushButton::clicked, this, &ScanWidget::startScanning);
-    connect(viewButton, &DPushButton::clicked, this, &ScanWidget::saveRequested);
+    connect(viewButton, &DPushButton::clicked, this, [this]() {
+        QDesktopServices::openUrl(QUrl::fromLocalFile(getSaveDirectory()));
+    });
 
     splitter->addWidget(settingsArea);
 
@@ -367,31 +379,65 @@ void ScanWidget::onFormatChanged(int index)
     emit deviceSettingsChanged();
 }
 
-void ScanWidget::onScanFinished(const QImage &image)
+QString ScanWidget::getSaveDirectory()
 {
-    // 确保Documents/scan目录存在
-    QDir documentsDir(QStandardPaths::writableLocation(QStandardPaths::DocumentsLocation));
-    if (!documentsDir.mkpath("scan")) {
-        qWarning() << "Failed to create scan directory";
+    if (m_saveDir.isEmpty()) {
+        // Set default save directory: Documents/scan
+        QDir documentsDir(QStandardPaths::writableLocation(QStandardPaths::DocumentsLocation));
+        m_saveDir = documentsDir.filePath("scan");
+        if (!documentsDir.mkpath("scan")) {
+            qWarning() << "Failed to create scan directory:" << m_saveDir;
+        }
+    }
+    return m_saveDir;
+}
+
+void ScanWidget::setSaveDirectory(const QString &dir)
+{
+    if (dir.isEmpty()) {
+        qWarning() << "Empty directory path provided";
         return;
     }
+    
+    QDir saveDir(dir);
+    if (!saveDir.exists()) {
+        if (!saveDir.mkpath(".")) {
+            qWarning() << "Failed to create directory:" << dir;
+            return;
+        }
+    }
+    
+    m_saveDir = dir;
+    qDebug() << "Save directory set to:" << m_saveDir;
+}
 
-    // 生成带时间戳的文件名
-    QString fileName = QString("scan_%1.%2")
+void ScanWidget::onScanFinished(const QImage &image)
+{
+    QString scanDir = getSaveDirectory();
+    QString prefix = "scan";
+    if (m_device) {
+        QString deviceName = m_device->currentDeviceName();
+        // get the first part of the device name before the first space
+        // e.g. "Canon LiDE 300" -> "Canon"
+        int spacePos = deviceName.indexOf(' ');
+        prefix = spacePos > 0 ? deviceName.left(spacePos) : deviceName;
+    }
+
+    // generate a file name with timestamp
+    QString fileName = QString("%1_%2.%3").arg(prefix)
                                .arg(QDateTime::currentDateTime().toString("yyyyMMdd_hhmmss"))
                                .arg(FORMATS[m_imageSettings->format].toLower());
 
-    // 处理颜色模式转换
+    // handle color mode conversion
     QImage processedImage = image;
-    // 处理颜色模式转换
+    // handle color mode conversion
     if (m_imageSettings->colorMode == 1) {   // GRAYSCALE
         processedImage = image.convertToFormat(QImage::Format_Grayscale8);
     } else if (m_imageSettings->colorMode == 2) {   // BLACKWHITE
         processedImage = image.convertToFormat(QImage::Format_Mono);
     }
 
-    // 保存图片
-    QString filePath = documentsDir.filePath("scan/" + fileName);
+    QString filePath = QDir(scanDir).filePath(fileName);
     bool saveSuccess = false;
 
     if (m_imageSettings->format < 4) {   // PNG/JPG/BMP/TIFF
@@ -404,6 +450,9 @@ void ScanWidget::onScanFinished(const QImage &image)
 
     if (saveSuccess) {
         qDebug() << "Scan saved to:" << filePath;
+        // add the saved file path to the top of the history box
+        m_historyEdit->moveCursor(QTextCursor::Start);
+        m_historyEdit->insertPlainText(filePath + "\n");
     } else {
         qWarning() << "Failed to save scan to:" << filePath;
     }
