@@ -1,3 +1,7 @@
+// SPDX-FileCopyrightText: 2025 UnionTech Software Technology Co., Ltd.
+//
+// SPDX-License-Identifier: GPL-3.0-or-later
+
 #include "scannerswidget.h"
 
 #include <QSharedPointer>
@@ -18,7 +22,7 @@ ScannersWidget::ScannersWidget(QWidget *parent) : QWidget(parent)
 void ScannersWidget::setupUI()
 {
     mainLayout = new QVBoxLayout(this);
-    
+
     // Title bar with refresh button
     QHBoxLayout *titleLayout = new QHBoxLayout();
     DLabel *titleLabel = new DLabel(tr("Scanner Devices"));
@@ -42,7 +46,7 @@ void ScannersWidget::setupUI()
     deviceList->setSpacing(10);
     mainLayout->addWidget(deviceList);
 
-    connect(refreshButton, &DIconButton::clicked, this, [this](){
+    connect(refreshButton, &DIconButton::clicked, this, [this]() {
         emit updateDeviceListRequested();
     });
 }
@@ -50,19 +54,19 @@ void ScannersWidget::setupUI()
 void ScannersWidget::updateDeviceList(QSharedPointer<ScannerDevice> scanner, QSharedPointer<WebcamDevice> webcam)
 {
     deviceList->clear();
-    
+
     // Add scanner devices
     QStringList scannerDevices = scanner->getAvailableDevices();
     for (const QString &name : scannerDevices) {
         addDeviceItem(name, tr("Scanner"), DeviceBase::DeviceStatus::Idle, true);
     }
-    
+
     // Add webcam devices
     QStringList webcamDevices = webcam->getAvailableDevices();
     for (const QString &name : webcamDevices) {
         addDeviceItem(name, tr("Webcam"), DeviceBase::DeviceStatus::Idle, false);
     }
-    
+
     // Update UI based on device availability
     if (deviceList->count() == 0) {
         DLabel *emptyLabel = new DLabel(tr("No devices found"));
@@ -73,22 +77,22 @@ void ScannersWidget::updateDeviceList(QSharedPointer<ScannerDevice> scanner, QSh
 }
 
 void ScannersWidget::addDeviceItem(const QString &name, const QString &model,
-                                  const DeviceBase::DeviceStatus status, bool isScanner)
+                                   const DeviceBase::DeviceStatus status, bool isScanner)
 {
     QListWidgetItem *item = new QListWidgetItem(deviceList);
     item->setData(Qt::UserRole, name);
     item->setData(Qt::UserRole + 1, isScanner);
-    
+
     DFrame *itemWidget = new DFrame();
     QGraphicsDropShadowEffect *shadow = new QGraphicsDropShadowEffect(itemWidget);
-    shadow->setBlurRadius(10); 
+    shadow->setBlurRadius(10);
     shadow->setOffset(2, 2);
     shadow->setColor(QColor(0, 0, 0, 50));
     itemWidget->setGraphicsEffect(shadow);
     itemWidget->setBackgroundRole(QPalette::Window);
 
     QHBoxLayout *layout = new QHBoxLayout(itemWidget);
-    
+
     // Device icon
     DLabel *iconLabel = new DLabel();
     // TODO: Replace with actual device icon
@@ -101,7 +105,7 @@ void ScannersWidget::addDeviceItem(const QString &name, const QString &model,
     }
     iconLabel->setPixmap(icon.pixmap(120, 120));
     layout->addWidget(iconLabel);
-    
+
     // Device info
     QVBoxLayout *infoLayout = new QVBoxLayout();
     DLabel *nameLabel = new DLabel(name);
@@ -113,7 +117,7 @@ void ScannersWidget::addDeviceItem(const QString &name, const QString &model,
     infoLayout->setContentsMargins(10, 10, 10, 10);
     layout->addLayout(infoLayout);
     layout->addStretch();
-    
+
     // Scan button
     DPushButton *scanButton = new DPushButton(tr("Scan"));
     scanButton->setProperty("deviceName", name);
@@ -122,8 +126,8 @@ void ScannersWidget::addDeviceItem(const QString &name, const QString &model,
     scanButton->setFixedHeight(60);
     layout->addWidget(scanButton);
     layout->setContentsMargins(10, 10, 10, 10);
-    
-    connect(scanButton, &DPushButton::clicked, this, [this, name, isScanner](){
+
+    connect(scanButton, &DPushButton::clicked, this, [this, name, isScanner]() {
         emit deviceSelected(name, isScanner);
     });
 
@@ -141,7 +145,7 @@ void ScannersWidget::addDeviceItem(const QString &name, const QString &model,
     }
     modelLabel->setText(tr("Model: %1").arg(model));
     statusLabel->setText(tr("Status: %1").arg(statusText));
-    
+
     // itemWidget->setLayout(layout);
     item->setSizeHint(itemWidget->sizeHint());
     deviceList->setItemWidget(item, itemWidget);

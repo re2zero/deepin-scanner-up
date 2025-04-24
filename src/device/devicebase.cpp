@@ -1,6 +1,10 @@
+// SPDX-FileCopyrightText: 2025 UnionTech Software Technology Co., Ltd.
+//
+// SPDX-License-Identifier: GPL-3.0-or-later
+
 #include "devicebase.h"
 
-DeviceBase::DeviceBase(QObject *parent) 
+DeviceBase::DeviceBase(QObject *parent)
     : QObject(parent),
       m_state(Disconnected)
 {

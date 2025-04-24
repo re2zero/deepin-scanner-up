@@ -1,3 +1,7 @@
+// SPDX-FileCopyrightText: 2025 UnionTech Software Technology Co., Ltd.
+//
+// SPDX-License-Identifier: GPL-3.0-or-later
+
 #include "webcamdevice.h"
 #include <QDebug>
 #include <QDir>
@@ -333,7 +337,7 @@ bool WebcamDevice::setResolution(int width, int height)
     }
 
     // 调整摄像头参数以解决图像过亮的问题
-    //adjustCommonCameraSettings();
+    // adjustCommonCameraSettings();
 
     // 恢复设备状态
     m_isInitialized = true;
@@ -484,7 +488,7 @@ void WebcamDevice::startPreview()
     }
 
     // 确保预览开始前应用适当的摄像头参数设置
-    //adjustCommonCameraSettings();
+    // adjustCommonCameraSettings();
 
     // 为预览设置适当的亮度和曝光
     //    setCameraAutoExposure(false);   // 禁用自动曝光
@@ -770,7 +774,7 @@ QImage WebcamDevice::frameToQImage(const void *data, int width, int height, int 
         buf.type = V4L2_BUF_TYPE_VIDEO_CAPTURE;
         buf.memory = V4L2_MEMORY_MMAP;
         buf.index = m_currentBuffer;
-        
+
         size_t actualSize = 0;
         if (ioctl(m_fd, VIDIOC_QUERYBUF, &buf) != -1) {
             actualSize = buf.bytesused;
@@ -779,7 +783,7 @@ QImage WebcamDevice::frameToQImage(const void *data, int width, int height, int 
             actualSize = width * height;
             qDebug() << "使用估计大小:" << actualSize;
         }
-        
+
         QImage image;
         if (image.loadFromData(static_cast<const uchar *>(data), actualSize, "JPEG")) {
             return image;

@@ -10,6 +10,7 @@ if(UNIX AND NOT APPLE)
 
     # Use pkg-config to find SANE (usually provided as 'sane-backends')
     pkg_check_modules(SANE REQUIRED sane-backends)
+
     if(SANE_FOUND)
         message(STATUS "Found SANE: TRUE (via pkg-config)")
         include_directories(${SANE_INCLUDE_DIRS}) # Add include directories
@@ -19,7 +20,8 @@ if(UNIX AND NOT APPLE)
 
     # Use pkg-config to find PNG (usually provided as 'libpng')
     pkg_check_modules(PNG REQUIRED libpng)
-     if(PNG_FOUND)
+
+    if(PNG_FOUND)
         message(STATUS "Found PNG: TRUE (via pkg-config)")
         include_directories(${PNG_INCLUDE_DIRS}) # Add include directories
     else()
@@ -34,18 +36,10 @@ file(GLOB_RECURSE SOURCES
     "*.h"
 )
 
-# app sources
-file(GLOB_RECURSE APP_SOURCES 
-    "app/*.cpp" 
-    "app/*.h"
-)
-
 # 定义可执行文件
 add_executable(${PROJECT_NAME}
     ${SOURCES}
-    ${APP_SOURCES}
 )
-
 
 # 启用自动moc处理
 set_target_properties(${PROJECT_NAME} PROPERTIES
@@ -79,6 +73,7 @@ if(UNIX AND NOT APPLE)
         target_link_libraries(${PROJECT_NAME} PRIVATE ${SANE_LIBRARIES} ${PNG_LIBRARIES})
         message(STATUS "Linking with SANE and PNG libraries (found via pkg-config).")
     endif()
+
     # No need for else here, pkg_check_modules already handles REQUIRED errors
 endif()
 
@@ -89,7 +84,7 @@ qt_add_resources(qrc_RESOURCES
 target_sources(${PROJECT_NAME} PRIVATE ${qrc_RESOURCES})
 
 # 安装目标
-install(TARGETS ${PROJECT_NAME} 
+install(TARGETS ${PROJECT_NAME}
     RUNTIME DESTINATION ${CMAKE_INSTALL_BINDIR}
 )
 
@@ -106,6 +101,6 @@ install(FILES
 
 # # 安装帮助文件
 # install(DIRECTORY
-#     ${CMAKE_SOURCE_DIR}/assets/
-#     DESTINATION ${CMAKE_INSTALL_DATADIR}/deepin-manual/manual-assets/application
+# ${CMAKE_SOURCE_DIR}/assets/
+# DESTINATION ${CMAKE_INSTALL_DATADIR}/deepin-manual/manual-assets/application
 # )

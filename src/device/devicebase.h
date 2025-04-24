@@ -1,3 +1,7 @@
+// SPDX-FileCopyrightText: 2025 UnionTech Software Technology Co., Ltd.
+//
+// SPDX-License-Identifier: GPL-3.0-or-later
+
 #ifndef DEVICEBASE_H
 #define DEVICEBASE_H
 
@@ -18,7 +22,7 @@ public:
         Connected,
         Capturing
     };
-    
+
     enum DeviceType {
         Scanner,
         Webcam
@@ -66,4 +70,4 @@ private:
 
 using DevicePtr = QSharedPointer<DeviceBase>;
 
-#endif // DEVICEBASE_H
+#endif   // DEVICEBASE_H

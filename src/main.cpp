@@ -1,5 +1,8 @@
-#include "mainwindow.h"
+// SPDX-FileCopyrightText: 2025 UnionTech Software Technology Co., Ltd.
+//
+// SPDX-Liteense-Identifier: GPL-3.0-or-later
 
+#include "mainwindow.h"
 
 #include <DApplication>
 #include <DLog>
@@ -38,7 +41,7 @@ int main(int argc, char *argv[])
     DLogManager::setLogFormat(logFormat);
     DLogManager::registerConsoleAppender();
     DLogManager::registerFileAppender();
-    
+
     MainWindow mainWindow;
     mainWindow.show();
 

@@ -1,3 +1,7 @@
+// SPDX-FileCopyrightText: 2025 UnionTech Software Technology Co., Ltd.
+//
+// SPDX-License-Identifier: GPL-3.0-or-later
+
 #include "scannerdevice.h"
 #include <QDebug>
 #include <QFile>
@@ -149,7 +153,7 @@ QStringList ScannerDevice::getAvailableDevices()
         QStringList entries = backendDir.entryList(QDir::Files);
         for (const QString &entry : entries) {
             qDebug() << " -" << entry;
-            
+
             // 读取每个后端配置文件
             QFile backendFile(backendDir.filePath(entry));
             if (backendFile.open(QIODevice::ReadOnly | QIODevice::Text)) {
@@ -183,7 +187,7 @@ QStringList ScannerDevice::getAvailableDevices()
     groupsProcess.waitForFinished(5000);
     QString groupsOutput = QString::fromUtf8(groupsProcess.readAllStandardOutput());
     qDebug() << "Current user groups:" << groupsOutput;
-    
+
     if (!groupsOutput.contains("scanner") && !groupsOutput.contains("saned")) {
         qWarning() << "Current user is not in the scanner or saned group!";
         qWarning() << "This may cause permission issues. Add user to these groups with:";
@@ -207,7 +211,7 @@ QStringList ScannerDevice::getAvailableDevices()
         QString errorMsg = QString("Failed to get SANE device list: %1").arg(sane_strstatus(status));
         qWarning() << errorMsg;
         emit errorOccurred(errorMsg);
-        
+
         // 如果特定后端没有安装，尝试提供建议
         QProcess dpkgProcess;
         dpkgProcess.start("dpkg", QStringList() << "-l" << "*sane*");
@@ -215,7 +219,7 @@ QStringList ScannerDevice::getAvailableDevices()
         QString dpkgOutput = QString::fromUtf8(dpkgProcess.readAllStandardOutput());
         qDebug() << "Installed SANE packages:";
         qDebug() << dpkgOutput;
-        
+
         if (!dpkgOutput.contains("libsane-extras")) {
             qWarning() << "libsane-extras package not found, which contains additional scanner drivers";
             qWarning() << "Try installing: sudo apt-get install libsane-extras";
@@ -226,14 +230,14 @@ QStringList ScannerDevice::getAvailableDevices()
             qDebug() << "Adding a virtual test scanner device";
             deviceNames.append("test:0");
         }
-        
+
         return deviceNames;
     }
 
     if (!device_list) {
         qWarning() << "Device list is null, but status was GOOD";
         emit errorOccurred("Device list is null");
-        
+
         // 添加虚拟测试设备
         deviceNames.append("test:0");
         return deviceNames;
@@ -268,17 +272,16 @@ QStringList ScannerDevice::getAvailableDevices()
         qDebug() << "No SANE devices found, adding a virtual test device";
         deviceNames.append("test:0");
 
-#ifdef ENABLE_POPUPS
+#    ifdef ENABLE_POPUPS
         // 建议一些可能的解决方法
         emit errorOccurred(tr("No scanner devices found. Possible solutions:\n"
-                        "1. Ensure scanner is connected and powered on\n"
-                        "2. Run command: sudo gpasswd -a $USER scanner\n"
-                        "3. Restart SANE: sudo service saned restart\n"
-                        "4. Install required driver package: sudo apt-get install libsane-extras\n"
-                        "5. For network scanners, check network configuration\n"
-                        "6. Reconnect USB cable or restart computer"));
-#endif
-        
+                              "1. Ensure scanner is connected and powered on\n"
+                              "2. Run command: sudo gpasswd -a $USER scanner\n"
+                              "3. Restart SANE: sudo service saned restart\n"
+                              "4. Install required driver package: sudo apt-get install libsane-extras\n"
+                              "5. For network scanners, check network configuration\n"
+                              "6. Reconnect USB cable or restart computer"));
+#    endif
     }
 
 #else
@@ -401,7 +404,7 @@ void ScannerDevice::startScan(const QString &tempOutputFilePath)
         emit errorOccurred(tr("Scanner not opened"));
         return;
     }
-    
+
     setState(Capturing);
 
     // 获取扫描仪参数
@@ -959,9 +962,7 @@ bool ScannerDevice::setResolution(int dpi)
     int resolution_option = -1;
     for (SANE_Int i = 0; i < option_count; ++i) {
         option_desc = sane_get_option_descriptor(m_device, i);
-        if (option_desc && option_desc->name && 
-            (strcmp(option_desc->name, "resolution") == 0 || 
-             strcmp(option_desc->name, "x-resolution") == 0)) {
+        if (option_desc && option_desc->name && (strcmp(option_desc->name, "resolution") == 0 || strcmp(option_desc->name, "x-resolution") == 0)) {
             resolution_option = i;
             break;
         }

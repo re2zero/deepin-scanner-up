@@ -1,3 +1,7 @@
+// SPDX-FileCopyrightText: 2025 UnionTech Software Technology Co., Ltd.
+//
+// SPDX-License-Identifier: GPL-3.0-or-later
+
 #ifndef SCANWIDGET_H
 #define SCANWIDGET_H
 
@@ -17,9 +21,10 @@ DWIDGET_USE_NAMESPACE
 
 class QComboBox;
 
-struct ImageSettings {
-    int colorMode = 0; // 0=COLOR, 1=GRAYSCALE, 2=BLACKWHITE
-    int format = 0;    // 0=PNG, 1=JPG, 2=BMP, 3=TIFF, 4=PDF, 5=OFD
+struct ImageSettings
+{
+    int colorMode = 0;   // 0=COLOR, 1=GRAYSCALE, 2=BLACKWHITE
+    int format = 0;   // 0=PNG, 1=JPG, 2=BMP, 3=TIFF, 4=PDF, 5=OFD
 };
 
 class ScanWidget : public QWidget
@@ -27,7 +32,7 @@ class ScanWidget : public QWidget
     Q_OBJECT
 public:
     explicit ScanWidget(QWidget *parent = nullptr);
-    
+
     void setupDeviceMode(QSharedPointer<DeviceBase> device, QString name);
     void setPreviewImage(const QImage &image);
     void startCameraPreview();
@@ -60,7 +65,7 @@ private:
     bool m_isScanner;
     QTimer m_previewTimer;
     QMutex m_previewMutex;
-    
+
     // preview area
     DLabel *m_previewLabel;
 
@@ -69,8 +74,8 @@ private:
     QComboBox *m_resolutionCombo;
     QComboBox *m_colorCombo;
     QComboBox *m_formatCombo;
-    
+
     QScopedPointer<ImageSettings> m_imageSettings;
 };
 
-#endif // SCANWIDGET_H
+#endif   // SCANWIDGET_H
