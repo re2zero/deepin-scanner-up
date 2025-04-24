@@ -2,6 +2,8 @@ cmake_minimum_required(VERSION 3.15)
 
 # project(deepin-scanner)
 
+add_subdirectory(libofd)
+
 # --- Find SANE and PNG using pkg-config (more robust) ---
 # Only on non-Windows systems
 if(UNIX AND NOT APPLE)
@@ -30,10 +32,13 @@ if(UNIX AND NOT APPLE)
 endif()
 
 # 收集所有源文件
-file(GLOB_RECURSE SOURCES
-    "*.cpp"
-    "*.c"
-    "*.h"
+file(GLOB SOURCES
+    "${CMAKE_CURRENT_SOURCE_DIR}/*.cpp"
+    "${CMAKE_CURRENT_SOURCE_DIR}/*.h"
+    "${CMAKE_CURRENT_SOURCE_DIR}/ui/*.cpp"
+    "${CMAKE_CURRENT_SOURCE_DIR}/ui/*.h"
+    "${CMAKE_CURRENT_SOURCE_DIR}/device/*.cpp"
+    "${CMAKE_CURRENT_SOURCE_DIR}/device/*.h"
 )
 
 # 定义可执行文件
@@ -64,6 +69,7 @@ set(CMAKE_INCLUDE_CURRENT_DIR ON)
 # 链接库
 target_link_libraries(${PROJECT_NAME} PRIVATE
     ${LINK_LIBS}
+    ofdcpp
 )
 
 # --- 链接 SANE 和 PNG (仅在非 Windows 系统) ---

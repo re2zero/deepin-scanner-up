@@ -4,6 +4,8 @@
 
 #include "scanwidget.h"
 
+#include <ofd/ofd_writer.h>
+
 #include <QVBoxLayout>
 #include <QGroupBox>
 #include <QComboBox>
@@ -132,24 +134,27 @@ void ScanWidget::setupUI()
     groupLayout->addLayout(formatLayout);
 
     settingsLayout->addWidget(settingsGroup);
-    settingsLayout->addSpacing(50);
+    settingsLayout->addSpacing(20);
 
     QWidget *bottomWidget = new QWidget();
     QVBoxLayout *buttonLayout = new QVBoxLayout(bottomWidget);
 
     // Action buttons
     DIconButton *scanButton = new DIconButton();
+    scanButton->setToolTip(tr("Scan"));
+    scanButton->setFocusPolicy(Qt::NoFocus);
     scanButton->setIcon(QIcon::fromTheme("btn_scan"));
-    scanButton->setIconSize(QSize(120, 120));
-    scanButton->setFixedSize(160, 160);
-    scanButton->setBackgroundRole(QPalette::Highlight);
+    scanButton->setIconSize(QSize(36, 36));
+    scanButton->setFixedSize(200, 50);
+    scanButton->setBackgroundRole(DPalette::Highlight);
+
     DPushButton *viewButton = new DPushButton(tr("View Scanned Image"));
     viewButton->setFixedSize(200, 50);
     // viewButton->setFlat(true);
     viewButton->setFocusPolicy(Qt::NoFocus);
 
     buttonLayout->addWidget(scanButton, 0, Qt::AlignHCenter);
-    buttonLayout->addSpacing(50);
+    buttonLayout->addSpacing(20);
     buttonLayout->addWidget(viewButton, 0, Qt::AlignHCenter);
 
     settingsLayout->addWidget(bottomWidget);
@@ -207,7 +212,7 @@ void ScanWidget::setupDeviceMode(QSharedPointer<DeviceBase> device, QString name
     m_device = device;
     if (m_isScanner) {
         m_modeLabel->setText(tr("Scan Mode"));
-        const QStringList scanModes = { tr("Flatbed"), tr("ADF"), tr("Duplex") };
+        const QStringList scanModes = { tr("Flatbed") }; //, tr("ADF"), tr("Duplex")
         m_modeCombo->addItems(scanModes);
     } else {
         m_modeLabel->setText(tr("Video Format"));
@@ -463,9 +468,16 @@ void ScanWidget::onScanFinished(const QImage &image)
             saveSuccess = true;
         }
     } else {
-        // OFD格式暂未实现
-        qWarning() << "OFD格式暂未实现";
-        return;
+        // Create vector of images
+        QVector<QImage> images;   
+        images.append(processedImage);
+
+        // Write OFD file
+        ofd::Writer writer;
+        saveSuccess = writer.createFromImages(filePath, images, 0, 0);
+        if (!saveSuccess) {
+            qWarning() << "Failed to create OFD file";
+        }
     }
 
     if (saveSuccess) {

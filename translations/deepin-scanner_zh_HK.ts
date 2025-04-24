@@ -39,100 +39,99 @@ Scanner functionality will be unavailable.</source>
 <context>
     <name>ScanWidget</name>
     <message>
-        <location filename="../src/ui/scanwidget.cpp" line="65"/>
+        <location filename="../src/ui/scanwidget.cpp" line="70"/>
         <source>Scan Settings</source>
         <translation>掃描設定</translation>
     </message>
     <message>
-        <location filename="../src/ui/scanwidget.cpp" line="93"/>
+        <location filename="../src/ui/scanwidget.cpp" line="98"/>
         <source>Resolution</source>
         <translation>解析度</translation>
     </message>
     <message>
-        <location filename="../src/ui/scanwidget.cpp" line="106"/>
+        <location filename="../src/ui/scanwidget.cpp" line="111"/>
         <source>Color Mode</source>
         <translation>色彩模式</translation>
     </message>
     <message>
-        <location filename="../src/ui/scanwidget.cpp" line="119"/>
+        <location filename="../src/ui/scanwidget.cpp" line="124"/>
         <source>Image Format</source>
         <translation>圖像格式</translation>
     </message>
     <message>
-        <location filename="../src/ui/scanwidget.cpp" line="143"/>
+        <location filename="../src/ui/scanwidget.cpp" line="151"/>
         <source>View Scanned Image</source>
         <translation>查看掃描圖像</translation>
     </message>
     <message>
+        <location filename="../src/ui/scanwidget.cpp" line="144"/>
         <source>Scan</source>
-        <translation type="vanished">掃描</translation>
+        <translation>掃描</translation>
     </message>
     <message>
         <source>Save</source>
         <translation type="vanished">儲存</translation>
     </message>
     <message>
-        <location filename="../src/ui/scanwidget.cpp" line="206"/>
+        <location filename="../src/ui/scanwidget.cpp" line="214"/>
         <source>Scan Mode</source>
         <translation>掃描模式</translation>
     </message>
     <message>
-        <location filename="../src/ui/scanwidget.cpp" line="207"/>
+        <location filename="../src/ui/scanwidget.cpp" line="215"/>
         <source>Flatbed</source>
         <translation>平板掃描</translation>
     </message>
     <message>
-        <location filename="../src/ui/scanwidget.cpp" line="207"/>
         <source>Duplex</source>
-        <translation>雙面掃描</translation>
+        <translation type="vanished">雙面掃描</translation>
     </message>
     <message>
-        <location filename="../src/ui/scanwidget.cpp" line="210"/>
+        <location filename="../src/ui/scanwidget.cpp" line="218"/>
         <source>Video Format</source>
         <translation>視頻格式</translation>
     </message>
     <message>
-        <location filename="../src/ui/scanwidget.cpp" line="214"/>
+        <location filename="../src/ui/scanwidget.cpp" line="222"/>
         <source>Color</source>
         <translation>彩色</translation>
     </message>
     <message>
-        <location filename="../src/ui/scanwidget.cpp" line="214"/>
+        <location filename="../src/ui/scanwidget.cpp" line="222"/>
         <source>Grayscale</source>
         <translation>灰度</translation>
     </message>
     <message>
-        <location filename="../src/ui/scanwidget.cpp" line="214"/>
+        <location filename="../src/ui/scanwidget.cpp" line="222"/>
         <source>Black White</source>
         <translation>黑白</translation>
     </message>
     <message>
-        <location filename="../src/ui/scanwidget.cpp" line="207"/>
         <source>ADF</source>
-        <translation>ADF</translation>
+        <translation type="vanished">ADF</translation>
     </message>
     <message>
-        <location filename="../src/ui/scanwidget.cpp" line="157"/>
+        <location filename="../src/ui/scanwidget.cpp" line="165"/>
         <source>Scan history will be shown here</source>
         <translation>掃描歷史將顯示在這裡</translation>
     </message>
     <message>
-        <location filename="../src/ui/scanwidget.cpp" line="242"/>
+        <location filename="../src/ui/scanwidget.cpp" line="250"/>
         <source>Device not initialized</source>
         <translation>設備未初始化</translation>
     </message>
     <message>
-        <location filename="../src/ui/scanwidget.cpp" line="279"/>
+        <location filename="../src/ui/scanwidget.cpp" line="287"/>
         <source>Initializing preview...</source>
         <translation>正在初始化預覽...</translation>
     </message>
     <message>
-        <location filename="../src/ui/scanwidget.cpp" line="286"/>
+        <location filename="../src/ui/scanwidget.cpp" line="294"/>
         <source>Device preview not available</source>
         <translation>設備預覽不可用</translation>
     </message>
     <message>
-        <location filename="../src/ui/scanwidget.cpp" line="327"/>
+        <location filename="../src/ui/scanwidget.cpp" line="335"/>
         <source>No preview image</source>
         <translation>無預覽圖像</translation>
     </message>

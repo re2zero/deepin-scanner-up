@@ -13,6 +13,7 @@ Build-Depends:
  libdtk6widget-dev [!mipsel !mips64el] | libdtkwidget-dev,
  libdtk6gui-dev [!mipsel !mips64el] | libdtkgui-dev,
  libdtk6core-dev [!mipsel !mips64el] | libdtkcore-dev,
+ libquazip1-qt6-dev | libquazip1-qt5-dev | libquazip5-dev,
  libsane-dev,
  libtiff-dev,
  libjpeg-dev,
@@ -26,4 +27,4 @@ Depends:
     ${shlibs:Depends},
     ${misc:Depends},
 Description: a tool for scanning.
- Document Scanner is a tool for scanning document files, supporting PDF, JPEG, PNG,TIFF.
+ Document Scanner is a tool for scanning document files, supporting PDF, JPEG, PNG, TIFF.
