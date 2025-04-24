@@ -1,0 +1,61 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<svg width="64px" height="64px" viewBox="0 0 64 64" version="1.1" xmlns="http://www.w3.org/2000/svg" xmlns:xlink="http://www.w3.org/1999/xlink">
+    <title>扫描仪</title>
+    <defs>
+        <filter x="-8.8%" y="-8.7%" width="117.5%" height="121.7%" filterUnits="objectBoundingBox" id="filter-1">
+            <feOffset dx="0" dy="1" in="SourceAlpha" result="shadowOffsetOuter1"></feOffset>
+            <feGaussianBlur stdDeviation="1.5" in="shadowOffsetOuter1" result="shadowBlurOuter1"></feGaussianBlur>
+            <feColorMatrix values="0 0 0 0 0   0 0 0 0 0   0 0 0 0 0  0 0 0 0.2 0" type="matrix" in="shadowBlurOuter1" result="shadowMatrixOuter1"></feColorMatrix>
+            <feMerge>
+                <feMergeNode in="shadowMatrixOuter1"></feMergeNode>
+                <feMergeNode in="SourceGraphic"></feMergeNode>
+            </feMerge>
+        </filter>
+        <linearGradient x1="50%" y1="-55.5496652%" x2="50%" y2="117.950614%" id="linearGradient-2">
+            <stop stop-color="#D8D8D8" offset="0%"></stop>
+            <stop stop-color="#3D3D3D" offset="100%"></stop>
+        </linearGradient>
+        <linearGradient x1="52.4128239%" y1="-79.7625377%" x2="52.4128239%" y2="126.574792%" id="linearGradient-3">
+            <stop stop-color="#787779" offset="0%"></stop>
+            <stop stop-color="#59575B" offset="100%"></stop>
+        </linearGradient>
+        <linearGradient x1="50%" y1="-11.1414931%" x2="50%" y2="113.945312%" id="linearGradient-4">
+            <stop stop-color="#565656" offset="0%"></stop>
+            <stop stop-color="#3C3B3B" offset="100%"></stop>
+        </linearGradient>
+        <linearGradient x1="50%" y1="-6.99637277%" x2="50%" y2="135.759626%" id="linearGradient-5">
+            <stop stop-color="#B2B2B2" offset="0%"></stop>
+            <stop stop-color="#F3F3F3" offset="100%"></stop>
+        </linearGradient>
+        <polygon id="path-6" points="8.78076172 20 48.5698242 20 52 29 5 29"></polygon>
+        <filter x="-4.3%" y="-11.1%" width="108.5%" height="144.4%" filterUnits="objectBoundingBox" id="filter-7">
+            <feOffset dx="0" dy="1" in="SourceAlpha" result="shadowOffsetOuter1"></feOffset>
+            <feGaussianBlur stdDeviation="0.5" in="shadowOffsetOuter1" result="shadowBlurOuter1"></feGaussianBlur>
+            <feColorMatrix values="0 0 0 0 0   0 0 0 0 0   0 0 0 0 0  0 0 0 0.184331294 0" type="matrix" in="shadowBlurOuter1"></feColorMatrix>
+        </filter>
+        <linearGradient x1="50%" y1="0%" x2="50%" y2="100%" id="linearGradient-8">
+            <stop stop-color="#4FFFC5" offset="0%"></stop>
+            <stop stop-color="#FFEEEE" stop-opacity="0" offset="100%"></stop>
+        </linearGradient>
+    </defs>
+    <g id="扫描管理1040" stroke="none" stroke-width="1" fill="none" fill-rule="evenodd">
+        <g id="设置" transform="translate(-70, -154)">
+            <g id="编组-41备份" transform="translate(30, 25)">
+                <g id="编组-9备份-2" transform="translate(20, 116)">
+                    <g id="编组" transform="translate(23, 22)" filter="url(#filter-1)">
+                        <path d="M5.68434189e-14,32 L57,32 L56.1724827,43.5852423 C56.0752974,44.9458364 54.9431506,46 53.5790901,46 L3.42090993,46 C2.0568494,46 0.924702598,44.9458364 0.827517309,43.5852423 L5.68434189e-14,32 L5.68434189e-14,32 Z" id="矩形" fill="url(#linearGradient-2)"></path>
+                        <polygon id="矩形备份-2" fill="url(#linearGradient-3)" points="6 18 51 18 57 32 0 32"></polygon>
+                        <path d="M6,0 L51,0 L55.4531573,16.3585371 C55.6417421,17.0512975 55.233027,17.7657689 54.5402666,17.9543536 C54.4289746,17.9846498 54.3141456,18 54.1988037,18 L2.71033357,18 C1.99236339,18 1.41033357,17.4179702 1.41033357,16.7 C1.41033357,16.5824098 1.42628799,16.4653632 1.45776028,16.352063 L6,0 L6,0 Z" id="矩形备份-3" fill="url(#linearGradient-4)" transform="translate(28.45, 9) scale(1, -1) translate(-28.45, -9)"></path>
+                        <g id="矩形备份-4" transform="translate(28.5, 24.5) scale(-1, 1) translate(-28.5, -24.5)">
+                            <use fill="black" fill-opacity="1" filter="url(#filter-7)" xlink:href="#path-6"></use>
+                            <use fill="url(#linearGradient-5)" fill-rule="evenodd" xlink:href="#path-6"></use>
+                        </g>
+                        <polygon id="矩形备份-5" fill="url(#linearGradient-8)" transform="translate(28.5, 26.5019) scale(-1, 1) translate(-28.5, -26.5019)" points="50.1119911 24.0462947 52 29 5 29 7.09882516 24.003804"></polygon>
+                        <circle id="椭圆形" fill="#F86562" cx="43.95" cy="35.95" r="1.95"></circle>
+                        <circle id="椭圆形备份" fill="#37FFBC" cx="50.95" cy="35.95" r="1.95"></circle>
+                    </g>
+                </g>
+            </g>
+        </g>
+    </g>
+</svg>
